@@ -1,0 +1,56 @@
+# Pure Python pyproject.toml (without PyO3/Rust)
+# This will replace pyproject.toml once we remove Rust code
+
+[project]
+name = "ergon"
+version = "0.1.0"
+description = "Durable execution framework for Python"
+authors = [{name = "LLM Agents Team"}]
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+keywords = ["workflow", "durable-execution", "temporal", "async", "llm"]
+
+dependencies = [
+    "aiosqlite>=0.19.0",  # Async SQLite storage backend
+    "redis[hiredis]>=5.0.0",  # Async Redis storage backend (hiredis for performance)
+    "numpy>=2.4.0",  # For scientific computation examples (latest stable as of Dec 2024)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "mypy>=1.0",
+    "ruff>=0.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
