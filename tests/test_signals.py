@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from ergon.core import get_current_call_type, CallType
 from ergon.storage import InMemoryExecutionLog
-from ergon.executor.executor import Executor
+from ergon.executor import Executor
 from ergon.executor.signal import await_external_signal, signal_resume
 from ergon.decorators import flow, step
 

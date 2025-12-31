@@ -523,8 +523,8 @@ class RedisExecutionLog(ExecutionLog):
         self,
         flow_id: str,
         step: int,
-        fire_at: datetime,
-        name: str = ""
+        timer_fire_at: datetime,
+        timer_name: Optional[str] = None
     ) -> None:
         """
         Schedule a durable timer.
@@ -535,15 +535,15 @@ class RedisExecutionLog(ExecutionLog):
         self._check_connected()
 
         inv_key = self._invocation_key(flow_id, step)
-        fire_at_millis = int(fire_at.timestamp() * 1000)
+        fire_at_millis = int(timer_fire_at.timestamp() * 1000)
 
         # Atomic: update invocation + add to timers sorted set
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(
                 inv_key, "status", InvocationStatus.WAITING_FOR_TIMER.value
             )
-            await pipe.hset(inv_key, "fire_at", fire_at.isoformat())
-            await pipe.hset(inv_key, "timer_name", name)
+            await pipe.hset(inv_key, "fire_at", timer_fire_at.isoformat())
+            await pipe.hset(inv_key, "timer_name", timer_name)
 
             # Add to sorted set (score = fire_at_millis)
             timer_member = f"{flow_id}:{step}"

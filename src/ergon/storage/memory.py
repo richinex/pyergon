@@ -67,6 +67,10 @@ class InMemoryExecutionLog(ExecutionLog):
         self._timer_notify = asyncio.Event()
         self._status_notify = asyncio.Event()
 
+    def __repr__(self) -> str:
+        """Return string representation of storage instance."""
+        return "InMemoryExecutionLog"
+
     # ========================================================================
     # Invocation Operations
     # ========================================================================

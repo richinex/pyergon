@@ -14,7 +14,7 @@ import pytest
 from uuid import uuid4, UUID
 
 from ergon.decorators import flow, step
-from ergon.executor.executor import Executor
+from ergon.executor import Executor
 from ergon.executor.outcome import (
     FlowOutcome,
     Completed,

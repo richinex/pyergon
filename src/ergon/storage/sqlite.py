@@ -75,6 +75,31 @@ class SqliteExecutionLog(ExecutionLog):
         self._timer_notify = asyncio.Event()
         self._status_notify = asyncio.Event()
 
+    @classmethod
+    async def in_memory(cls) -> "SqliteExecutionLog":
+        """
+        Create an in-memory SQLite storage for testing.
+
+        Convenience factory that creates storage with ":memory:" path
+        and automatically calls connect().
+
+        Returns:
+            Connected in-memory storage instance
+
+        Example:
+            storage = await SqliteExecutionLog.in_memory()
+            # Ready to use immediately
+        """
+        instance = cls(":memory:")
+        await instance.connect()
+        return instance
+
+    def __repr__(self) -> str:
+        """Return string representation of storage instance."""
+        if self.db_path == ":memory:":
+            return "SqliteExecutionLog(in-memory)"
+        return f"SqliteExecutionLog({self.db_path})"
+
     async def connect(self) -> None:
         """
         Open database connection and initialize schema.
@@ -110,13 +135,16 @@ class SqliteExecutionLog(ExecutionLog):
         # Enable WAL mode for concurrent reads (from Rust ergon)
         # From Rust: journal_mode(SqliteJournalMode::Wal)
         # IMPORTANT: Must fetch the result, not just execute
+        # Note: In-memory databases return "memory" and don't support WAL
         cursor = await self._connection.execute("PRAGMA journal_mode=WAL")
         result = await cursor.fetchone()
         await cursor.close()
 
-        # Verify WAL mode was set
-        if result and result[0].upper() != 'WAL':
-            raise StorageError(f"Failed to enable WAL mode, got: {result[0]}")
+        # Verify WAL mode was set (or accept "memory" for in-memory databases)
+        if result:
+            mode = result[0].upper()
+            if mode not in ('WAL', 'MEMORY'):
+                raise StorageError(f"Failed to enable WAL mode, got: {result[0]}")
 
         # Set synchronous mode to NORMAL for better performance
         # From Rust: synchronous(SqliteSynchronous::Normal)
@@ -773,18 +801,18 @@ class SqliteExecutionLog(ExecutionLog):
         self,
         flow_id: str,
         step: int,
-        fire_at: datetime,
-        name: str = ""
+        timer_fire_at: datetime,
+        timer_name: Optional[str] = None
     ) -> None:
         """
         Schedule a durable timer.
 
         From Dave Cheney: "Discourage the use of nil as a parameter"
-        name has default "" instead of Optional[str].
+        timer_name is Optional[str] for explicit null handling.
         """
         self._check_connected()
 
-        fire_at_millis = int(fire_at.timestamp() * 1000)
+        fire_at_millis = int(timer_fire_at.timestamp() * 1000)
 
         await self._connection.execute("""
             UPDATE execution_log
@@ -795,7 +823,7 @@ class SqliteExecutionLog(ExecutionLog):
         """, (
             InvocationStatus.WAITING_FOR_TIMER.value,
             fire_at_millis,
-            name,
+            timer_name,
             flow_id,
             step
         ))

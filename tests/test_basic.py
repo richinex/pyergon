@@ -35,7 +35,8 @@ def test_sqlite_log_creation():
     try:
         storage = ergon.SqliteExecutionLog(db_path)
         assert storage is not None
-        assert str(storage) == "SqliteExecutionLog"
+        # Repr should contain the path
+        assert db_path in repr(storage)
         print(f"Created SQLite log: {repr(storage)}")
     finally:
         # Cleanup
@@ -43,11 +44,14 @@ def test_sqlite_log_creation():
             os.unlink(db_path)
 
 
-def test_sqlite_in_memory():
+@pytest.mark.asyncio
+async def test_sqlite_in_memory():
     """Test creating an in-memory SqliteExecutionLog."""
-    storage = ergon.SqliteExecutionLog.in_memory()
+    storage = await ergon.SqliteExecutionLog.in_memory()
     assert storage is not None
+    assert "in-memory" in repr(storage)
     print(f"Created in-memory SQLite log: {repr(storage)}")
+    await storage.close()
 
 
 def test_in_memory_log_creation():
