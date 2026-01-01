@@ -1,39 +1,26 @@
 # Ergon - Durable Execution Framework for Python
 
-**Pure Python** implementation of durable execution with Temporal-like semantics.
+Pure Python implementation of durable execution with Temporal-like semantics.
 
 ## Features
 
-- ✅ **Durable Steps**: Automatically cached and retried on failure
-- ✅ **Durable Timers**: Timers survive process restarts
-- ✅ **Distributed Workers**: Multiple workers process flows in parallel
-- ✅ **Work Stealing**: Fair load distribution across workers
-- ✅ **Storage Backends**: SQLite and in-memory implementations
-- ✅ **Pure Python**: No Rust/PyO3 dependencies, just aiosqlite
+- **Durable Steps**: Automatically cached and retried on failure
+- **Durable Timers**: Timers survive process restarts
+- **Distributed Workers**: Multiple workers process flows in parallel
+- **Work Stealing**: Fair load distribution across workers
+- **Storage Backends**: SQLite and in-memory implementations
+- **Pure Python**: No Rust/PyO3 dependencies, just aiosqlite
 
-## Design Principles
+## Design Philosophy
 
-### From Dave Cheney's Practical Go (adapted for Python)
+Ergon follows practical software engineering principles:
+
 - Simple, readable code over clever abstractions
-- Clear naming (no cryptic abbreviations)
-- Explicit dependencies (no globals)
-- Errors handled once (no log AND raise)
-- Guard clauses (return early)
-
-### From Software Design Patterns (Python)
-- **Template Method**: Worker main loop structure
-- **Strategy**: Pluggable flow handlers
-- **Adapter**: Unified storage interface
-- **Observer**: Timer notification system
-- **Façade**: Simplified scheduling API
-- **Builder**: Fluent worker configuration
-
-### SOLID Principles
-- **Single Responsibility**: Each component has one purpose
-- **Open-Closed**: Extend via protocols, not modification
-- **Liskov Substitution**: Storage backends interchangeable
-- **Interface Segregation**: Focused protocols
-- **Dependency Inversion**: Depend on abstractions
+- Clear naming without cryptic abbreviations
+- Explicit dependencies and no global state
+- Errors handled once at the appropriate level
+- Type hints and protocols for structural typing
+- Composable components with focused responsibilities
 
 ## Installation
 
@@ -188,33 +175,21 @@ pyergon/
    - `ScheduledFlow`: Distributed queue item
 
 2. **Storage Layer** (`ergon.storage`)
-   - `ExecutionLog`: Abstract protocol (Adapter pattern)
+   - `ExecutionLog`: Abstract protocol for persistence
    - `SqliteExecutionLog`: SQLite backend
-   - `InMemoryExecutionLog`: In-memory backend (testing)
+   - `InMemoryExecutionLog`: In-memory backend for testing
 
 3. **Executor** (`ergon.executor`)
    - `Executor`: Execute flows with durable context
    - `Scheduler`: Enqueue flows for distributed processing
-   - `Worker`: Process flows from queue (Template Method)
-   - `schedule_timer`: Durable timers (Observer pattern)
+   - `Worker`: Process flows from queue
+   - `schedule_timer`: Durable timers
    - `await_external_signal`: External event coordination
 
 4. **Decorators** (`ergon.decorators`)
-   - `@flow_type`: Mark workflow class (with FlowType protocol)
+   - `@flow_type`: Mark workflow class
    - `@flow`: Mark flow entry point method
    - `@step`: Mark durable step method
-
-### Design Patterns
-
-| Pattern | Usage | Module |
-|---------|-------|--------|
-| Template Method | Worker main loop | `Worker._run()` |
-| Strategy | Flow handlers | `Worker.register()` |
-| Adapter | Storage backends | `SqliteExecutionLog` |
-| Observer | Timer notifications | `schedule_timer()` |
-| Façade | Simplified scheduling | `Scheduler` |
-| Protocol | Structural typing | `ExecutionLog` |
-| Context | Execution state | `Context` (task-local) |
 
 ## Examples
 
@@ -245,29 +220,20 @@ ruff check src/ergon/
 
 ## Development
 
-### Design Principles Applied
-
-Every component follows:
-1. **Dave Cheney's Practical Go** principles (adapted for Python)
-2. **Software Design Patterns** from the Python reference
-3. **SOLID** principles for maintainability
-
 ### Code Quality
 
-- Comprehensive docstrings with pattern citations
+- Comprehensive docstrings
 - Type hints throughout
-- Dave Cheney principle references
-- Design pattern explanations
+- Protocol-based interfaces
 - Example usage in every module
+- Test coverage with property-based testing
 
-## Statistics
+## Project Stats
 
-- **~2,400 lines** of pure Python
-- **60 tests** passing (8 test files)
-- **48% code coverage**
-- **7 design patterns** explicitly applied
-- **5 SOLID principles** followed
-- **0 Rust dependencies** (pure Python!)
+- 2,400+ lines of pure Python
+- 60 tests passing across 8 test files
+- 48% code coverage
+- Zero external compiled dependencies
 
 ## License
 
@@ -278,8 +244,3 @@ MIT / Apache 2.0 (dual license)
 Inspired by:
 - [Temporal](https://temporal.io/) - Durable execution engine
 - [Dave Cheney](https://dave.cheney.net/) - Practical Go principles
-- Software Design Patterns in Python
-
----
-
-**Pure Python. No Magic. Clear Principles.**
