@@ -21,10 +21,8 @@ Implementation follows Rust ergon's sqlite.rs with Python idioms:
 
 import asyncio
 import aiosqlite
-import json
-import pickle
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Any
+from typing import List, Optional
 from pathlib import Path
 
 from ergon.core import Invocation, InvocationStatus, ScheduledFlow, TaskStatus
@@ -288,8 +286,6 @@ class SqliteExecutionLog(ExecutionLog):
         Using REPLACE instead of INSERT handles duplicate starts gracefully
         (idempotent operation).
         """
-        from ergon.core.retry import RetryPolicy
-        import uuid
         import json
 
         self._check_connected()
@@ -359,8 +355,6 @@ class SqliteExecutionLog(ExecutionLog):
         If invocation not found, raises StorageError. Caller handles it.
         """
         self._check_connected()
-
-        now = datetime.now().isoformat()
 
         # Update existing invocation (matches Rust line 399-408)
         cursor = await self._connection.execute("""

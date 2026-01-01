@@ -24,7 +24,7 @@ import asyncio
 import pickle
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
-from ergon.core import CallType, get_current_call_type, get_current_context
+from ergon.core import CallType, get_current_context
 from ergon.core.status import InvocationStatus
 
 # Global state for signal coordination

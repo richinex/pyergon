@@ -12,7 +12,7 @@ COMPLIANCE: Matches Rust ergon src/core/invocation.rs exactly
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Any, TypeVar
+from typing import Optional, TypeVar
 
 from ergon.core.status import InvocationStatus
 from ergon.core.retry import RetryPolicy

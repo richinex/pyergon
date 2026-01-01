@@ -15,7 +15,7 @@ PYTHONPATH=src python examples/dag_non_deterministic.py
 """
 
 import asyncio
-from ergon import flow, step, dag, Executor
+from ergon import flow, step, Executor
 from ergon.executor.outcome import Completed
 from ergon.storage.sqlite import SqliteExecutionLog
 
@@ -83,7 +83,7 @@ class PaymentProcessor:
         """
         # Manually call steps since we need to pass discount_code
         amount = await self.apply_discount(discount_code)
-        card_status = await self.validate_card()
+        await self.validate_card()
         receipt = await self.send_receipt(amount)
         return receipt
 

@@ -31,11 +31,11 @@ Like GameReport (Chapter 8), worker defines fixed algorithm with variation point
 import asyncio
 import pickle
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Callable, Awaitable, Optional, Dict, TypeVar, Generic
 from uuid import UUID
 
-from ergon.core import TaskStatus, ScheduledFlow, FlowType
+from ergon.core import ScheduledFlow
 from ergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ class Registry(Generic[S]):
             registry.register(OrderFlow, lambda flow: flow.process())
         """
         from ergon.executor.instance import Executor
-        from ergon.executor.outcome import Completed, Suspended
+        from ergon.executor.outcome import Completed
 
         # Get stable type ID (Rust uses T::type_id())
         # Python @flow decorator adds type_id() method

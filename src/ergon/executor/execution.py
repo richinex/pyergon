@@ -19,7 +19,6 @@ of the worker loop implementation.
 
 import logging
 from typing import Optional
-from uuid import UUID
 from datetime import timedelta
 
 from ergon.storage.base import ExecutionLog

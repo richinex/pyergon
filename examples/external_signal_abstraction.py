@@ -25,7 +25,6 @@ PYTHONPATH=src python examples/external_signal_abstraction.py
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Optional, Dict, Protocol
 import pickle
 

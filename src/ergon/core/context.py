@@ -23,17 +23,13 @@ From Dave Cheney:
 so this is acceptable for implicit context tracking in async code.
 """
 
-import asyncio
 import pickle
 from contextvars import ContextVar
-from datetime import datetime
 from threading import Lock
 from typing import Any, Optional, TypeVar, TYPE_CHECKING
-from uuid import UUID
 
 from ergon.core.call_type import CallType
 from ergon.core.invocation import Invocation
-from ergon.core.status import InvocationStatus
 from ergon.storage.base import ExecutionLog
 
 # Avoid circular import for type checking
@@ -435,7 +431,7 @@ class Context:
                 raise result
 
             return result
-        except Exception as e:
+        except Exception:
             # If deserialization fails, treat as no cache
             return _CACHE_MISS
 

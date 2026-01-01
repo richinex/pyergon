@@ -36,7 +36,6 @@ From Dave Cheney:
 - Return early pattern (guard clauses for existence checks)
 """
 
-import asyncio
 import pickle
 from typing import Optional
 from datetime import datetime, timezone
@@ -754,7 +753,6 @@ class RedisExecutionLog(ExecutionLog):
             retry_count = int(data.get(b"retry_count", b"0").decode())
 
             created_at = datetime.fromisoformat(data[b"created_at"].decode())
-            updated_at = datetime.fromisoformat(data[b"updated_at"].decode())
 
             locked_by = None
             if b"locked_by" in data:

@@ -48,10 +48,9 @@ class OrderProcessor:
 
 import asyncio
 import pickle
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import (
-    Any, Awaitable, Callable, Dict, Generic, List, Optional, Set, TypeVar
+    Any, Awaitable, Callable, Dict, Generic, List, Set, TypeVar
 )
 
 # Type variables

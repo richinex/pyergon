@@ -17,7 +17,6 @@ allowing the system to continue processing other flows.
 import pickle
 import logging
 from typing import Optional
-from uuid import UUID
 
 from ergon.storage.base import ExecutionLog
 from ergon.executor.suspension_payload import SuspensionPayload

@@ -20,8 +20,6 @@ From Rust: ergon/examples/distributed_worker_timer_sqlite.rs
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
-from uuid import uuid4
 
 from ergon import flow, flow_type, step, Scheduler, Worker
 from ergon.executor.timer import schedule_timer_named

@@ -19,7 +19,7 @@ when invoking child flows.
 from typing import Protocol, TypeVar, runtime_checkable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ergon.core.flow_type import FlowType
+    pass
 
 __all__ = ["InvokableFlow"]
 

@@ -63,9 +63,8 @@ See `examples/dag_blocking_ops.py` for detailed examples.
 """
 
 import asyncio
-import inspect
-from typing import Any, Dict, List, Optional, Set
-from collections import defaultdict, deque
+from typing import Any, Dict, List, Optional
+from collections import deque
 
 
 class DagExecutionError(Exception):

@@ -18,15 +18,14 @@ No separation of FlowInstance/FlowExecutor - simpler is better.
 """
 
 import pickle
-from typing import Any, Callable, Awaitable, TypeVar, Generic
-from uuid import uuid4, UUID
+from typing import Callable, Awaitable, TypeVar, Generic
+from uuid import uuid4
 
 from ergon.core import (
     Context,
     EXECUTION_CONTEXT,
     CALL_TYPE,
     CallType,
-    FlowType,
     _CACHE_MISS,
 )
 from ergon.executor.outcome import FlowOutcome, Completed, Suspended, _SuspendExecution

@@ -22,13 +22,9 @@ import pickle
 import functools
 import hashlib
 from typing import Any, Callable, Optional, TypeVar, Union, TYPE_CHECKING
-from datetime import datetime
 
 from ergon.core import (
-    Context,
     get_current_context,
-    CallType,
-    get_current_call_type,
     RetryPolicy,
     RetryableError,
     _CACHE_MISS,
@@ -174,7 +170,7 @@ def step(
             }
             try:
                 parameters = pickle.dumps(params_dict)
-            except Exception as e:
+            except Exception:
                 # If we can't serialize, we can't cache - just execute
                 return await f(*args, **kwargs)
 
@@ -646,7 +642,7 @@ def flow(
 
                 return result
 
-            except Exception as e:
+            except Exception:
                 # Restore enclosing step before raising
                 if prev_enclosing_step is not None:
                     ctx.set_enclosing_step(prev_enclosing_step)

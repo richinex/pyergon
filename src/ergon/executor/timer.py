@@ -41,12 +41,8 @@ through the database, making this fully distributed.
 **Rust Equivalent**: See `src/executor/timer.rs` lines 198-294
 """
 
-import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
-import contextvars
 
-from ergon.storage.base import ExecutionLog
 
 
 # ========================================================================
