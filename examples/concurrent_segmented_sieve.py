@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from typing import List
 
-from ergon import flow, step, Worker, Scheduler, InMemoryExecutionLog
+from ergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
 
 # =============================================================================
 # GLOBAL CONFIG
@@ -147,6 +147,7 @@ def calculate_segment(low: int, high: int, base_primes: List[int]) -> int:
 # =============================================================================
 
 @dataclass
+@flow_type
 class PrimeSegmentFlow:
     """
     Flow that processes one segment of the prime range.

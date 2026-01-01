@@ -31,17 +31,17 @@ PYTHONPATH=src python examples/dag_limit_sequential.py
 """
 
 import asyncio
-from ergon import flow, step, dag, Executor
+from dataclasses import dataclass
+from ergon import flow, flow_type, step, dag, Executor
 from ergon.executor.outcome import Completed
 from ergon.storage.memory import InMemoryExecutionLog
 
 
-@flow
+@dataclass
+@flow_type
 class ComplexDagSequential:
     """Complex DAG with sequential dependencies forcing one-at-a-time execution."""
-
-    def __init__(self, id: str):
-        self.id = id
+    id: str
 
     # =========================================================================
     # Level 0: Start
@@ -168,6 +168,7 @@ class ComplexDagSequential:
         print(f"[L6] final = {m2} + {agg} = {result}")
         return result
 
+    @flow
     async def run(self) -> int:
         """
         Execute DAG sequentially using dag() function.

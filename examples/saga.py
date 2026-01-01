@@ -9,14 +9,14 @@ previous successes.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from ergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
+from ergon.core import TaskStatus
 
-# Track completions to exit cleanly
-completed_count = 0
-done_event = None
-count_lock = None
+# Suppress worker logging for clean output
+logging.basicConfig(level=logging.CRITICAL)
 
 
 # =============================================================================
@@ -65,7 +65,6 @@ class HolidaySaga:
 
         **Rust Reference**: lines 33-38
         """
-        print(f"   [1] Booking flight to {self.destination}...")
         await asyncio.sleep(0.05)
         return f"FLIGHT-{self.destination.upper()}"
 
@@ -76,7 +75,6 @@ class HolidaySaga:
 
         **Rust Reference**: lines 40-45
         """
-        print(f"   [2] Booking hotel in {self.destination}...")
         await asyncio.sleep(0.05)
         return f"HOTEL-{self.destination.upper()}"
 
@@ -89,11 +87,9 @@ class HolidaySaga:
 
         Fails if destination is "Atlantis" (no cars underwater!)
         """
-        print(f"   [3] Attempting to book car...")
         await asyncio.sleep(0.05)
 
         if self.destination == "Atlantis":
-            print(f"      Error: No cars available in Atlantis!")
             raise Exception("InventoryExhausted")
 
         return f"CAR-{self.destination.upper()}"
@@ -107,7 +103,6 @@ class HolidaySaga:
 
         **Rust Reference**: lines 62-67
         """
-        print(f"   [Rollback] Cancelling Hotel Reservation: {hotel_id}")
         await asyncio.sleep(0.05)
 
     @step
@@ -117,53 +112,24 @@ class HolidaySaga:
 
         **Rust Reference**: lines 69-74
         """
-        print(f"   [Rollback] Cancelling Flight Reservation: {flight_id}")
         await asyncio.sleep(0.05)
 
-    # --- ORCHESTRATOR ---
-
-    @staticmethod
-    async def mark_complete():
-        """
-        Helper to increment counter when flow ends (Success or Failure).
-
-        **Rust Reference**: lines 78-85
-        """
-        global completed_count, done_event, count_lock
-
-        async with count_lock:
-            completed_count += 1
-            count = completed_count
-
-        if count >= 2:
-            # We expect 2 flows (Paris + Atlantis)
-            done_event.set()
+    # --- FLOW ENTRY POINT ---
 
     @flow
     async def run_saga(self) -> str:
         """
         Execute saga with automatic compensation on failure.
 
-        **Rust Reference**: lines 87-126 (run_saga method)
-
-        Now mirrors Rust exactly - method is named `run_saga()` and uses
-        explicit registration via lambda: `worker.register(HolidaySaga, lambda saga: saga.run_saga())`
-
         In Rust, Result<String, String> means both Ok and Err are terminal states.
         In Python, we use SagaError with is_retryable()=False so the worker
         treats compensation failures as terminal states (no retry).
         """
         try:
-            result = await self.execute_logic()
-            await self.mark_complete()
-            return result
+            return await self.execute_logic()
         except SagaError:
-            # Already a SagaError (from execute_logic), just mark complete and re-raise
-            await self.mark_complete()
             raise
         except Exception as e:
-            # Unexpected error - wrap in SagaError
-            await self.mark_complete()
             raise SagaError(str(e)) from e
 
     async def execute_logic(self) -> str:
@@ -184,7 +150,6 @@ class HolidaySaga:
         try:
             hotel_id = await self.book_hotel()
         except Exception as e:
-            print(f"   Hotel failed. Compensating Flight...")
             await self.cancel_flight(flight_id)
             raise SagaError(f"Hotel failed: {e}")
 
@@ -192,20 +157,45 @@ class HolidaySaga:
         try:
             car_id = await self.book_car()
         except Exception as e:
-            print(f"   Car failed. Initiating Rollback Sequence...")
             # Compensation Logic: Reverse Order
             await self.cancel_hotel(hotel_id)
             await self.cancel_flight(flight_id)
             raise SagaError(f"Saga Failed (Rolled Back): {e}")
 
-        msg = f"CONFIRMED: {flight_id} / {hotel_id} / {car_id}"
-        print(f"   {msg}")
-        return msg
+        return f"CONFIRMED: {flight_id} / {hotel_id} / {car_id}"
 
 
 # =============================================================================
 # MAIN
 # =============================================================================
+
+async def _wait_for_completion(storage, task_ids, status_notify):
+    """Wait for all sagas to complete using event-driven notifications."""
+    while True:
+        all_complete = True
+
+        for task_id in task_ids:
+            task = await storage.get_scheduled_flow(task_id)
+            if task:
+                if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                    all_complete = False
+                    break
+
+        if all_complete:
+            break
+
+        await status_notify.wait()
+        status_notify.clear()
+
+
+async def _print_results(storage, scenarios):
+    """Print final results for all scenarios."""
+    for destination, task_id in scenarios:
+        task = await storage.get_scheduled_flow(task_id)
+        if task:
+            result = "success" if task.status == TaskStatus.COMPLETE else "compensated"
+            print(f"{destination}: {result}")
+
 
 async def main():
     """
@@ -217,52 +207,41 @@ async def main():
     1. Paris -> Success (all steps complete)
     2. Atlantis -> Failure at car booking (triggers compensation)
     """
-    global completed_count, done_event, count_lock
-
-    # Initialize global state
-    completed_count = 0
-    done_event = asyncio.Event()
-    count_lock = asyncio.Lock()
-
-    print("\n" + "="*70)
-    print("SAGA PATTERN - Compensating Transactions")
-    print("="*70)
-
     storage = InMemoryExecutionLog()
     scheduler = Scheduler(storage).with_version("v1.0")
 
-    # Scenario 1: Success (Paris)
-    print("\n[Scenario 1] Booking trip to Paris (should succeed)...")
-    saga_success = HolidaySaga(destination="Paris")
-    await scheduler.schedule(saga_success)
+    # Schedule sagas
+    scenarios = []
 
-    # Scenario 2: Failure + Compensation (Atlantis)
-    print("\n[Scenario 2] Booking trip to Atlantis (will fail at car booking)...")
-    saga_fail = HolidaySaga(destination="Atlantis")
-    await scheduler.schedule(saga_fail)
+    saga_paris = HolidaySaga(destination="Paris")
+    task_id_paris = await scheduler.schedule(saga_paris)
+    scenarios.append(("Paris", task_id_paris))
+
+    saga_atlantis = HolidaySaga(destination="Atlantis")
+    task_id_atlantis = await scheduler.schedule(saga_atlantis)
+    scenarios.append(("Atlantis", task_id_atlantis))
 
     # Start worker
-    worker = Worker(
-        storage=storage,
-        worker_id="saga-worker",
-        poll_interval=0.1
-    )
-
+    worker = Worker(storage=storage, worker_id="saga-worker", poll_interval=0.1)
     await worker.register(HolidaySaga)
     handle = await worker.start()
 
-    # Wait until both flows finish (Success + Failure)
-    await done_event.wait()
+    # Wait for completion using event-driven approach
+    status_notify = storage.status_notify()
+    task_ids = [task_id for _, task_id in scenarios]
+
+    try:
+        await asyncio.wait_for(
+            _wait_for_completion(storage, task_ids, status_notify),
+            timeout=10.0
+        )
+    except asyncio.TimeoutError:
+        print("[Warning] Timeout waiting for sagas to complete")
+
+    # Print results
+    await _print_results(storage, scenarios)
 
     await handle.shutdown()
-
-    print("\n" + "="*70)
-    print("SAGA DEMO COMPLETE")
-    print("="*70)
-    print("Both scenarios executed:")
-    print("  1. Paris: Succeeded with all bookings")
-    print("  2. Atlantis: Failed at car, compensated hotel and flight")
-    print("="*70 + "\n")
 
 
 if __name__ == "__main__":

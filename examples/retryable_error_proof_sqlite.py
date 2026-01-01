@@ -31,7 +31,8 @@ PYTHONPATH=src python examples/retryable_error_proof_sqlite.py
 """
 
 import asyncio
-from ergon import flow, step, Scheduler, Worker
+from dataclasses import dataclass
+from ergon import flow, flow_type, step, Scheduler, Worker
 from ergon.storage.sqlite import SqliteExecutionLog
 from ergon.core import RetryPolicy, RetryableError, TaskStatus
 
@@ -78,12 +79,11 @@ class ItemNotFound(InventoryError):
 # Scenario A: RETRYABLE Error (should execute 3 times)
 # ============================================================================
 
-@flow(retry_policy=RetryPolicy.STANDARD)
+@dataclass
+@flow_type
 class OrderA:
     """Flow with retryable error - should execute 3 times."""
-
-    def __init__(self, order_id: str):
-        self.order_id = order_id
+    order_id: str
 
     @step
     async def check_inventory(self) -> str:
@@ -104,6 +104,7 @@ class OrderA:
         print(f"    Inventory check succeeded on attempt {count}")
         return f"Inventory reserved for {self.order_id}"
 
+    @flow(retry_policy=RetryPolicy.STANDARD)
     async def process_order(self) -> str:
         """Main workflow entry point."""
         print(f"\n[Flow A] Processing order {self.order_id}")
@@ -118,13 +119,12 @@ class OrderA:
 # Scenario B: NON-RETRYABLE Error (should execute ONLY 1 time)
 # ============================================================================
 
-@flow(retry_policy=RetryPolicy.STANDARD)
+@dataclass
+@flow_type
 class OrderB:
     """Flow with non-retryable error - should execute only once."""
-
-    def __init__(self, order_id: str, item_sku: str):
-        self.order_id = order_id
-        self.item_sku = item_sku
+    order_id: str
+    item_sku: str
 
     @step
     async def check_inventory(self) -> str:
@@ -141,6 +141,7 @@ class OrderB:
         print("    Returning ItemNotFound")
         raise ItemNotFound(self.item_sku)
 
+    @flow(retry_policy=RetryPolicy.STANDARD)
     async def process_order(self) -> str:
         """Main workflow entry point."""
         print(f"\n[Flow B] Processing order {self.order_id}")

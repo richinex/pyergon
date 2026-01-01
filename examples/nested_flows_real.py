@@ -23,7 +23,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import List
 
-from ergon import flow, step, Scheduler, Worker, InMemoryExecutionLog
+from ergon import flow, flow_type, step, Scheduler, Worker, InMemoryExecutionLog
 from ergon.core import TaskStatus
 
 
@@ -63,19 +63,19 @@ class OrderResult:
 # PARENT FLOW: Actually spawns child flows inline
 # ============================================================================
 
-@flow
+@dataclass
+@flow_type
 class OrderProcessor:
     """
     Parent flow that processes orders with inline child flow execution.
 
     **Rust Reference**: OrderProcessor in nested_flows_real.rs lines 16-113
     """
+    order_id: str
+    items: List[str]
+    total_amount: float
 
-    def __init__(self, order_id: str, items: List[str], total_amount: float):
-        self.order_id = order_id
-        self.items = items
-        self.total_amount = total_amount
-
+    @flow
     async def process_order(self) -> OrderResult:
         """
         Main order processing flow.
@@ -180,7 +180,8 @@ class OrderProcessor:
 # CHILD FLOW: Payment processing
 # ============================================================================
 
-@flow
+@dataclass
+@flow_type
 class PaymentFlow:
     """
     Child flow for payment processing.
@@ -189,10 +190,8 @@ class PaymentFlow:
 
     Executed inline by parent flow (not scheduled separately).
     """
-
-    def __init__(self, transaction_id: str, amount: float):
-        self.transaction_id = transaction_id
-        self.amount = amount
+    transaction_id: str
+    amount: float
 
     async def process(self) -> PaymentResult:
         """
@@ -239,7 +238,8 @@ class PaymentFlow:
 # CHILD FLOW: Inventory management
 # ============================================================================
 
-@flow
+@dataclass
+@flow_type
 class InventoryFlow:
     """
     Child flow for inventory management.
@@ -248,10 +248,8 @@ class InventoryFlow:
 
     Executed inline by parent flow (not scheduled separately).
     """
-
-    def __init__(self, reservation_id: str, items: List[str]):
-        self.reservation_id = reservation_id
-        self.items = items
+    reservation_id: str
+    items: List[str]
 
     async def process(self) -> InventoryResult:
         """
