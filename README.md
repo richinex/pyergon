@@ -40,10 +40,10 @@
 ```bash
 # Clone repository
 git clone <repo-url>
-cd llm_graph_python
+cd pyergon
 
-# Install in development mode
-pip install -e .
+# Install dependencies with uv
+uv sync
 ```
 
 **Dependencies:**
@@ -54,13 +54,15 @@ pip install -e .
 
 ```python
 import asyncio
-from ergon import flow, step, SqliteExecutionLog
+from dataclasses import dataclass
+from ergon import flow, flow_type, step, Executor
+from ergon.storage.sqlite import SqliteExecutionLog
 
-@flow
+@dataclass
+@flow_type
 class OrderProcessor:
-    def __init__(self, order_id: str, amount: float):
-        self.order_id = order_id
-        self.amount = amount
+    order_id: str
+    amount: float
 
     @step
     async def validate(self):
@@ -72,20 +74,21 @@ class OrderProcessor:
         print(f"[{self.order_id}] Processing ${self.amount}...")
         return f"payment-{self.order_id}"
 
+    @flow
     async def run(self):
         await self.validate()
         return await self.process_payment()
 
 async def main():
     # Setup storage
-    storage = SqliteExecutionLog("orders.db")
-    await storage.connect()
+    storage = await SqliteExecutionLog.in_memory()
 
     # Execute workflow
     order = OrderProcessor("ORD-001", 100.0)
-    result = await order.run()
+    executor = Executor(order, storage, "order-001")
+    outcome = await executor.run(lambda o: o.run())
 
-    print(f"Result: {result}")
+    print(f"Result: {outcome.result}")
 
     await storage.close()
 
@@ -95,18 +98,16 @@ asyncio.run(main())
 ## Distributed Workers with Timers
 
 ```python
-from ergon import (
-    flow, step,
-    SqliteExecutionLog,
-    FlowScheduler,
-    FlowWorker,
-    schedule_timer_named
-)
+from dataclasses import dataclass
+from ergon import flow, flow_type, step, Scheduler, Worker
+from ergon.storage.sqlite import SqliteExecutionLog
+from ergon.executor.timer import schedule_timer_named
+from ergon.core import TaskStatus
 
-@flow
+@dataclass
+@flow_type
 class TimedOrderProcessor:
-    def __init__(self, order_id: str):
-        self.order_id = order_id
+    order_id: str
 
     @step
     async def wait_for_fraud_check(self):
@@ -114,6 +115,7 @@ class TimedOrderProcessor:
         await schedule_timer_named(2.0, f"fraud-{self.order_id}")
         print(f"[{self.order_id}] Fraud check complete")
 
+    @flow
     async def process(self):
         await self.wait_for_fraud_check()
         return "completed"
@@ -123,21 +125,15 @@ async def main():
     storage = SqliteExecutionLog("distributed.db")
     await storage.connect()
 
-    scheduler = FlowScheduler(storage)
+    scheduler = Scheduler(storage)
 
     # Start workers with timer processing
-    worker1 = FlowWorker(storage, "worker-1") \\
-        .with_timers(0.1) \\
-        .with_poll_interval(0.1)
-
-    await worker1.register(lambda flow: flow.process())
+    worker1 = Worker(storage, "worker-1", enable_timers=True)
+    await worker1.register(TimedOrderProcessor)
     handle1 = await worker1.start()
 
-    worker2 = FlowWorker(storage, "worker-2") \\
-        .with_timers(0.1) \\
-        .with_poll_interval(0.1)
-
-    await worker2.register(lambda flow: flow.process())
+    worker2 = Worker(storage, "worker-2", enable_timers=True)
+    await worker2.register(TimedOrderProcessor)
     handle2 = await worker2.start()
 
     # Schedule flows
@@ -159,25 +155,27 @@ asyncio.run(main())
 ## Project Structure
 
 ```
-llm_graph_python/
+pyergon/
 ├── src/ergon/              # Pure Python implementation
-│   ├── core/              # Core types (Invocation, Status)
-│   ├── storage/           # Storage backends (SQLite, Memory)
-│   ├── executor/          # Execution engine (Scheduler, Worker, Timer)
-│   ├── decorators.py      # @flow and @step decorators
-│   ├── context.py         # Execution context
+│   ├── core/              # Core types (Invocation, Status, Context)
+│   ├── storage/           # Storage backends (SQLite, Memory, Redis)
+│   ├── executor/          # Execution engine (Scheduler, Worker, Timer, Signal)
+│   ├── decorators.py      # @flow, @flow_type, and @step decorators
 │   └── __init__.py        # Public API
 │
 ├── examples/               # Example workflows
-│   └── distributed_worker_timer_sqlite.py
+│   ├── simple_timer_sqlite.py
+│   ├── complex_multi_worker_load_sqlite.py
+│   └── dag_limit_parallel.py
 │
-├── docs/                   # Documentation
-│   ├── ARCHITECTURE.md     # Design document
-│   ├── IMPLEMENTATION_SUMMARY.md  # Implementation details
-│   └── CLEANUP_CHECKLIST.md       # Migration guide
+├── tests/                  # Test suite (60 tests, 48% coverage)
+│   ├── test_basic.py
+│   ├── test_properties.py
+│   ├── test_durability.py
+│   ├── test_concurrency.py
+│   └── ...
 │
-├── tests/                  # Test suite (TODO)
-└── pyproject.toml          # Pure Python configuration
+└── pyproject.toml          # Project configuration
 ```
 
 ## Architecture
@@ -195,43 +193,48 @@ llm_graph_python/
    - `InMemoryExecutionLog`: In-memory backend (testing)
 
 3. **Executor** (`ergon.executor`)
-   - `FlowScheduler`: Enqueue flows (Single Responsibility)
-   - `FlowWorker`: Process flows (Template Method)
+   - `Executor`: Execute flows with durable context
+   - `Scheduler`: Enqueue flows for distributed processing
+   - `Worker`: Process flows from queue (Template Method)
    - `schedule_timer`: Durable timers (Observer pattern)
+   - `await_external_signal`: External event coordination
 
 4. **Decorators** (`ergon.decorators`)
-   - `@flow`: Mark workflow class
+   - `@flow_type`: Mark workflow class (with FlowType protocol)
+   - `@flow`: Mark flow entry point method
    - `@step`: Mark durable step method
 
 ### Design Patterns
 
 | Pattern | Usage | Module |
 |---------|-------|--------|
-| Template Method | Worker main loop | `FlowWorker._run()` |
-| Strategy | Flow handlers | `FlowWorker.register()` |
+| Template Method | Worker main loop | `Worker._run()` |
+| Strategy | Flow handlers | `Worker.register()` |
 | Adapter | Storage backends | `SqliteExecutionLog` |
 | Observer | Timer notifications | `schedule_timer()` |
-| Façade | Simplified scheduling | `FlowScheduler` |
-| Builder | Fluent configuration | `worker.with_timers()` |
+| Façade | Simplified scheduling | `Scheduler` |
 | Protocol | Structural typing | `ExecutionLog` |
+| Context | Execution state | `Context` (task-local) |
 
 ## Examples
 
-See `examples/distributed_worker_timer_sqlite.py` for a complete example demonstrating:
-- Multiple workers processing flows
-- Durable timer coordination
-- Worker distribution tracking
-- Graceful shutdown
+See `examples/` directory for complete examples:
+- **simple_timer_sqlite.py** - Durable timers with SQLite
+- **complex_multi_worker_load_sqlite.py** - Multi-worker stress test
+- **dag_limit_parallel.py** - Parallel DAG execution
 
 ```bash
-python examples/distributed_worker_timer_sqlite.py
+PYTHONPATH=src uv run python examples/simple_timer_sqlite.py
 ```
 
 ## Testing
 
 ```bash
-# Run tests (TODO: implement)
-pytest tests/
+# Run all tests (60 tests, 48% coverage)
+uv run pytest tests/
+
+# Run specific test file
+uv run pytest tests/test_durability.py -v
 
 # Type checking
 mypy src/ergon/
@@ -257,16 +260,12 @@ Every component follows:
 - Design pattern explanations
 - Example usage in every module
 
-## Documentation
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete design document
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Implementation details
-- **[CLEANUP_CHECKLIST.md](CLEANUP_CHECKLIST.md)** - Migration from PyO3
-
 ## Statistics
 
-- **~2,000 lines** of pure Python
-- **8 design patterns** explicitly applied
+- **~2,400 lines** of pure Python
+- **60 tests** passing (8 test files)
+- **48% code coverage**
+- **7 design patterns** explicitly applied
 - **5 SOLID principles** followed
 - **0 Rust dependencies** (pure Python!)
 

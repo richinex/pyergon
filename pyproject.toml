@@ -2,10 +2,10 @@
 # This will replace pyproject.toml once we remove Rust code
 
 [project]
-name = "ergon"
+name = "pyergon"
 version = "0.1.0"
 description = "Durable execution framework for Python"
-authors = [{name = "LLM Agents Team"}]
+authors = [{ name = "Richard chukwu" }]
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
@@ -20,23 +20,23 @@ classifiers = [
 keywords = ["workflow", "durable-execution", "temporal", "async", "llm"]
 
 dependencies = [
-    "aiosqlite>=0.19.0",  # Async SQLite storage backend
-    "redis[hiredis]>=5.0.0",  # Async Redis storage backend (hiredis for performance)
-    "numpy>=2.4.0",  # For scientific computation examples (latest stable as of Dec 2024)
+    "aiosqlite==0.21.0",     # Async SQLite storage backend
+    "redis[hiredis]==7.1.0", # Async Redis storage backend (hiredis for performance)
+    "numpy==2.4.0",          # For scientific computation examples (latest stable as of Dec 2024)
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-    "pytest-timeout>=2.0",
+    "pytest==9.0.1",
+    "pytest-asyncio==1.3.0",
+    "pytest-timeout==2.4.0",
     "pytest-xdist>=3.0",
-    "pytest-cov>=4.0",
-    "hypothesis>=6.0",
-    "mutmut>=3.0",
+    "pytest-cov==7.0.0",
+    "hypothesis==6.148.8",
+    "mutmut==3.4.0",
     "black>=23.0",
-    "mypy>=1.0",
-    "ruff>=0.1",
+    "mypy==1.19.0",
+    "ruff==0.14.6",
 ]
 
 [tool.pytest.ini_options]
