@@ -1,19 +1,21 @@
 """
 Tests for Phase 3 decorator system.
 
-Tests @flow and @step decorators and FlowContext execution.
+Tests @flow, @flow_type, and @step decorators and Executor execution.
 """
 
 import pytest
 import ergon
 import asyncio
+from dataclasses import dataclass
 
 
-@ergon.flow
+@dataclass
+@ergon.flow_type
 class SimpleWorkflow:
     """A simple workflow for testing."""
 
-    def __init__(self):
+    def __post_init__(self):
         self.execution_log = []
 
     @ergon.step
@@ -28,6 +30,7 @@ class SimpleWorkflow:
         self.execution_log.append(f"step_two({value})")
         return value + 10
 
+    @ergon.flow
     async def run(self, initial_value: int) -> int:
         """Main flow: chain the steps."""
         result1 = await self.step_one(initial_value)
@@ -46,9 +49,10 @@ def test_step_decorator():
     assert test_step._step_name == 'test_step'
 
 
-def test_flow_decorator():
-    """Test that @flow decorator adds metadata."""
-    @ergon.flow
+def test_flow_type_decorator():
+    """Test that @flow_type decorator adds metadata."""
+    @dataclass
+    @ergon.flow_type
     class TestFlow:
         @ergon.step
         async def step_a(self):
@@ -58,6 +62,7 @@ def test_flow_decorator():
         async def step_b(self):
             pass
 
+        @ergon.flow
         async def run(self):
             pass
 
@@ -70,28 +75,31 @@ def test_flow_decorator():
 
 
 @pytest.mark.asyncio
-async def test_flow_context_execution():
-    """Test basic flow execution with FlowContext."""
+async def test_executor_execution():
+    """Test basic flow execution with Executor."""
     storage = ergon.InMemoryExecutionLog()
     workflow = SimpleWorkflow()
 
-    async with ergon.FlowContext(storage) as ctx:
-        result = await ctx.execute_flow(workflow.run, 5)
+    executor = ergon.Executor(workflow, storage, "test-flow-1")
+    outcome = await executor.run(lambda w: w.run(5))
 
     # 5 * 2 = 10, 10 + 10 = 20
-    assert result == 20
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 20
 
 
 @pytest.mark.asyncio
-async def test_execute_with_context():
-    """Test the execute_with_context helper."""
+async def test_executor_tracks_steps():
+    """Test that executor tracks step execution."""
     storage = ergon.InMemoryExecutionLog()
     workflow = SimpleWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
-    result = await ctx.execute_flow(workflow.run, 5)
+    executor = ergon.Executor(workflow, storage, "test-flow-2")
+    outcome = await executor.run(lambda w: w.run(5))
 
-    assert result == 20
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 20
+
     # Both steps should have executed
     assert len(workflow.execution_log) == 2
     assert "step_one(5)" in workflow.execution_log
@@ -99,33 +107,37 @@ async def test_execute_with_context():
 
 
 @pytest.mark.asyncio
-async def test_flow_context_with_sqlite():
+async def test_executor_with_sqlite():
     """Test flow execution with SQLite storage."""
-    storage = ergon.SqliteExecutionLog.in_memory()
+    storage = await ergon.SqliteExecutionLog.in_memory()
     workflow = SimpleWorkflow()
 
-    async with ergon.FlowContext(storage) as ctx:
-        result = await ctx.execute_flow(workflow.run, 3)
+    executor = ergon.Executor(workflow, storage, "test-flow-3")
+    outcome = await executor.run(lambda w: w.run(3))
 
     # 3 * 2 = 6, 6 + 10 = 16
-    assert result == 16
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 16
 
 
 @pytest.mark.asyncio
-async def test_flow_with_custom_id():
+async def test_executor_with_custom_id():
     """Test flow execution with a custom flow ID."""
     storage = ergon.InMemoryExecutionLog()
     workflow = SimpleWorkflow()
     custom_id = "test-flow-12345"
 
-    async with ergon.FlowContext(storage, flow_id=custom_id) as ctx:
-        assert ctx.flow_id == custom_id
-        result = await ctx.execute_flow(workflow.run, 7)
+    executor = ergon.Executor(workflow, storage, custom_id)
+    assert executor.flow_id == custom_id
 
-    assert result == 24  # 7 * 2 = 14, 14 + 10 = 24
+    outcome = await executor.run(lambda w: w.run(7))
+
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 24  # 7 * 2 = 14, 14 + 10 = 24
 
 
-@ergon.flow
+@dataclass
+@ergon.flow_type
 class MultiStepWorkflow:
     """Workflow with multiple steps for testing."""
 
@@ -145,6 +157,7 @@ class MultiStepWorkflow:
         """Format the result."""
         return f"Result: {value}"
 
+    @ergon.flow
     async def run(self) -> str:
         """Execute the full workflow."""
         data = await self.fetch_data()
@@ -159,10 +172,11 @@ async def test_multi_step_workflow():
     storage = ergon.InMemoryExecutionLog()
     workflow = MultiStepWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
-    result = await ctx.execute_flow(workflow.run)
+    executor = ergon.Executor(workflow, storage, "multi-step-test")
+    outcome = await executor.run(lambda w: w.run())
 
-    assert result == "Result: 84"
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == "Result: 84"
 
 
 if __name__ == "__main__":

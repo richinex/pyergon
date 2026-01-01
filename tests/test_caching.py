@@ -7,13 +7,15 @@ Tests result serialization, caching, and step persistence.
 import pytest
 import ergon
 import asyncio
+from dataclasses import dataclass
 
 
-@ergon.flow
+@dataclass
+@ergon.flow_type
 class CachingTestWorkflow:
     """Workflow for testing caching behavior."""
 
-    def __init__(self):
+    def __post_init__(self):
         self.execution_count = {}
 
     @ergon.step
@@ -37,6 +39,7 @@ class CachingTestWorkflow:
 
         return value + 5
 
+    @ergon.flow
     async def run(self, initial_value: int) -> int:
         """Execute the workflow."""
         result1 = await self.expensive_operation(initial_value)
@@ -50,36 +53,41 @@ async def test_step_logging_to_storage():
     storage = ergon.InMemoryExecutionLog()
     workflow = CachingTestWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
-    result = await ctx.execute_flow(workflow.run, 5)
+    executor = ergon.Executor(workflow, storage, "caching-test-1")
+    outcome = await executor.run(lambda w: w.run(5))
 
-    assert result == 55  # (5 * 10) + 5
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 55  # (5 * 10) + 5
 
-    # Verify steps were logged
-    invocations = await storage.get_invocations_for_flow(ctx.flow_id)
-    assert len(invocations) == 2
+    # Verify steps were logged (flow entry + 2 steps = 3 invocations)
+    invocations = await storage.get_invocations_for_flow(executor.flow_id)
+    assert len(invocations) == 3
 
-    # Check first step
+    # Check flow entry
     assert invocations[0].step == 0
-    assert invocations[0].method_name == "expensive_operation"
-    assert invocations[0].status.is_complete
+    assert invocations[0].method_name == "run"
+    assert invocations[0].status == ergon.InvocationStatus.COMPLETE
 
-    # Check second step
-    assert invocations[1].step == 1
-    assert invocations[1].method_name == "another_step"
-    assert invocations[1].status.is_complete
+    # Check first step (expensive_operation)
+    step_methods = {inv.method_name for inv in invocations}
+    assert "expensive_operation" in step_methods
+    assert "another_step" in step_methods
+
+    # All should be complete
+    assert all(inv.status == ergon.InvocationStatus.COMPLETE for inv in invocations)
 
 
 @pytest.mark.asyncio
 async def test_step_execution_tracking():
     """Test that step execution is properly tracked."""
-    storage = ergon.SqliteExecutionLog.in_memory()
+    storage = await ergon.SqliteExecutionLog.in_memory()
     workflow = CachingTestWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
-    await ctx.execute_flow(workflow.run, 7)
+    executor = ergon.Executor(workflow, storage, "caching-test-2")
+    outcome = await executor.run(lambda w: w.run(7))
 
     # Each step should execute exactly once
+    assert isinstance(outcome, ergon.Completed)
     assert workflow.execution_count['expensive_operation'] == 1
     assert workflow.execution_count['another_step'] == 1
 
@@ -91,27 +99,30 @@ async def test_multiple_flows_separate_storage():
 
     # Run first workflow
     workflow1 = CachingTestWorkflow()
-    ctx1 = await ergon.execute_with_context(workflow1, storage)
-    result1 = await ctx1.execute_flow(workflow1.run, 3)
+    executor1 = ergon.Executor(workflow1, storage, "multi-flow-1")
+    outcome1 = await executor1.run(lambda w: w.run(3))
 
     # Run second workflow
     workflow2 = CachingTestWorkflow()
-    ctx2 = await ergon.execute_with_context(workflow2, storage)
-    result2 = await ctx2.execute_flow(workflow2.run, 4)
+    executor2 = ergon.Executor(workflow2, storage, "multi-flow-2")
+    outcome2 = await executor2.run(lambda w: w.run(4))
 
-    assert result1 == 35  # (3 * 10) + 5
-    assert result2 == 45  # (4 * 10) + 5
+    assert isinstance(outcome1, ergon.Completed)
+    assert isinstance(outcome2, ergon.Completed)
+    assert outcome1.result == 35  # (3 * 10) + 5
+    assert outcome2.result == 45  # (4 * 10) + 5
 
-    # Verify separate flows
-    invocations1 = await storage.get_invocations_for_flow(ctx1.flow_id)
-    invocations2 = await storage.get_invocations_for_flow(ctx2.flow_id)
+    # Verify separate flows (flow entry + 2 steps each = 3 invocations)
+    invocations1 = await storage.get_invocations_for_flow(executor1.flow_id)
+    invocations2 = await storage.get_invocations_for_flow(executor2.flow_id)
 
-    assert len(invocations1) == 2
-    assert len(invocations2) == 2
-    assert ctx1.flow_id != ctx2.flow_id
+    assert len(invocations1) == 3
+    assert len(invocations2) == 3
+    assert executor1.flow_id != executor2.flow_id
 
 
-@ergon.flow
+@dataclass
+@ergon.flow_type
 class ComplexWorkflow:
     """Workflow with more complex data types."""
 
@@ -125,6 +136,7 @@ class ComplexWorkflow:
         """Process a list."""
         return [item * 2 for item in items]
 
+    @ergon.flow
     async def run(self, data: dict, items: list) -> tuple:
         """Execute with complex types."""
         processed_dict = await self.process_dict(data)
@@ -138,64 +150,70 @@ async def test_complex_data_types():
     storage = ergon.InMemoryExecutionLog()
     workflow = ComplexWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
-    result = await ctx.execute_flow(
-        workflow.run,
-        {"name": "test", "value": 42},
-        [1, 2, 3]
+    executor = ergon.Executor(workflow, storage, "complex-data-test")
+    outcome = await executor.run(
+        lambda w: w.run(
+            {"name": "test", "value": 42},
+            [1, 2, 3]
+        )
     )
 
-    processed_dict, processed_list = result
+    assert isinstance(outcome, ergon.Completed)
+    processed_dict, processed_list = outcome.result
 
     assert processed_dict == {"name": "test", "value": 42, "processed": True, "count": 2}
     assert processed_list == [2, 4, 6]
 
-    # Verify storage
-    invocations = await storage.get_invocations_for_flow(ctx.flow_id)
-    assert len(invocations) == 2
+    # Verify storage (flow entry + 2 steps = 3 invocations)
+    invocations = await storage.get_invocations_for_flow(executor.flow_id)
+    assert len(invocations) == 3
 
 
 @pytest.mark.asyncio
 async def test_sqlite_persistence():
     """Test that SQLite storage persists data."""
-    storage = ergon.SqliteExecutionLog.in_memory()
+    storage = await ergon.SqliteExecutionLog.in_memory()
     workflow = CachingTestWorkflow()
 
     # Execute workflow
-    ctx = await ergon.execute_with_context(workflow, storage)
-    flow_id = ctx.flow_id
-    result = await ctx.execute_flow(workflow.run, 9)
+    executor = ergon.Executor(workflow, storage, "sqlite-persist-test")
+    outcome = await executor.run(lambda w: w.run(9))
 
-    assert result == 95  # (9 * 10) + 5
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 95  # (9 * 10) + 5
 
-    # Verify we can retrieve invocations after execution
-    invocations = await storage.get_invocations_for_flow(flow_id)
-    assert len(invocations) == 2
+    # Verify we can retrieve invocations after execution (flow entry + 2 steps = 3)
+    invocations = await storage.get_invocations_for_flow(executor.flow_id)
+    assert len(invocations) == 3
 
-    # Verify invocation details
-    first_inv = invocations[0]
-    assert first_inv.class_name == "CachingTestWorkflow"
-    assert first_inv.method_name == "expensive_operation"
-    assert first_inv.attempts == 1
+    # Verify invocation details - find the expensive_operation step
+    expensive_inv = next((inv for inv in invocations if inv.method_name == "expensive_operation"), None)
+    assert expensive_inv is not None
+    assert expensive_inv.class_name == "CachingTestWorkflow"
+    assert expensive_inv.attempts == 1
 
 
 @pytest.mark.asyncio
-async def test_flow_context_state():
-    """Test that FlowContext maintains proper state."""
+async def test_executor_state():
+    """Test that Executor maintains proper state."""
     storage = ergon.InMemoryExecutionLog()
     workflow = CachingTestWorkflow()
 
-    ctx = await ergon.execute_with_context(workflow, storage)
+    executor = ergon.Executor(workflow, storage, "executor-state-test")
 
     # Check initial state
-    assert ctx.current_step == 0
-    assert ctx.flow_id is not None
+    assert executor.flow_id is not None
+    assert executor.flow_id == "executor-state-test"
 
     # Execute
-    await ctx.execute_flow(workflow.run, 2)
+    outcome = await executor.run(lambda w: w.run(2))
 
-    # Check final state
-    assert ctx.current_step == 2  # Should have incremented for 2 steps
+    assert isinstance(outcome, ergon.Completed)
+    assert outcome.result == 25  # (2 * 10) + 5
+
+    # Verify invocations were logged (flow entry + 2 steps = 3 invocations)
+    invocations = await storage.get_invocations_for_flow(executor.flow_id)
+    assert len(invocations) == 3
 
 
 if __name__ == "__main__":

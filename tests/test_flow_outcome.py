@@ -11,9 +11,10 @@ This test verifies Phase 2 of the implementation (Event-Driven Architecture):
 """
 
 import pytest
+from dataclasses import dataclass
 from uuid import uuid4, UUID
 
-from ergon.decorators import flow, step
+from ergon.decorators import flow, flow_type, step
 from ergon.executor import Executor
 from ergon.executor.outcome import (
     FlowOutcome,
@@ -32,12 +33,11 @@ from ergon.storage.memory import InMemoryExecutionLog
 # Test Flows
 # =============================================================================
 
-@flow
+@dataclass
+@flow_type
 class SimpleFlow:
     """Flow that completes successfully."""
-
-    def __init__(self, value: int):
-        self.value = value
+    value: int
 
     @flow
     async def run(self) -> int:
@@ -45,9 +45,12 @@ class SimpleFlow:
         return self.value * 2
 
 
-@flow
+@dataclass
+@flow_type
 class ErrorFlow:
     """Flow that raises an error."""
+    # Dataclass needs at least one field
+    dummy: int = 0
 
     @flow
     async def run(self) -> int:
@@ -55,9 +58,12 @@ class ErrorFlow:
         raise ValueError("Simulated error")
 
 
-@flow
+@dataclass
+@flow_type
 class TimerFlow:
     """Flow that suspends on a timer."""
+    # Dataclass needs at least one field
+    dummy: int = 0
 
     @flow
     async def run(self) -> str:
@@ -67,23 +73,20 @@ class TimerFlow:
         return "Timer completed"
 
 
-@flow
+@dataclass
+@flow_type
 class SignalFlow:
     """Flow that suspends on a signal."""
+    # Dataclass needs at least one field
+    dummy: int = 0
 
     @flow
     async def run(self) -> str:
         """Await an external signal and suspend."""
-        # Await signal - this will suspend the flow
-        # The function takes a callable that performs the wait
-        result = await await_external_signal(
-            lambda: self._wait_for_payment()
-        )
-        return f"Signal received: {result}"
-
-    async def _wait_for_payment(self) -> str:
-        """Simulate waiting for payment confirmation."""
-        return "payment_confirmed"
+        # Await signal - pass signal name as string
+        result_bytes = await await_external_signal("payment_confirmed")
+        # In real usage, would deserialize: result = pickle.loads(result_bytes)
+        return f"Signal received: {result_bytes}"
 
 
 # =============================================================================
@@ -148,7 +151,6 @@ async def test_completed_error():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Phase 5: Timer integration with Worker not complete yet")
 async def test_suspended_timer():
     """
     Test FlowOutcome for timer suspension.
@@ -178,9 +180,8 @@ async def test_suspended_timer():
     # Verify suspend reason
     reason = outcome.reason
     assert isinstance(reason, SuspendReason)
-    # Convert flow_id to UUID if it's a string
-    expected_flow_id = UUID(executor.flow_id) if isinstance(executor.flow_id, str) else executor.flow_id
-    assert reason.flow_id == expected_flow_id, f"Expected flow_id={expected_flow_id}, got {reason.flow_id}"
+    # Compare flow_ids as strings (reason.flow_id is always a string)
+    assert reason.flow_id == executor.flow_id, f"Expected flow_id={executor.flow_id}, got {reason.flow_id}"
     assert reason.step == 0, f"Timer should be at step 0, got {reason.step}"
     assert reason.is_timer(), "Should be a timer suspension"
     assert not reason.is_signal(), "Should not be a signal suspension"
@@ -188,7 +189,6 @@ async def test_suspended_timer():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Phase 4: Signal suspension integration not complete yet")
 async def test_suspended_signal():
     """
     Test FlowOutcome for signal suspension.

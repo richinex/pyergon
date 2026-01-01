@@ -11,11 +11,12 @@ These tests verify that the system handles concurrent operations correctly:
 import pytest
 import asyncio
 import pickle
+from dataclasses import dataclass
 from uuid import uuid4
 from typing import List, Set
 from datetime import datetime
 
-from ergon.core import InvocationStatus
+from ergon.core import InvocationStatus, TaskStatus
 from ergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 from ergon.decorators import flow, flow_type, step
 from ergon.executor import Executor, Completed
@@ -27,6 +28,25 @@ from ergon.executor.worker import Worker
 # TEST 1: Concurrent Flow Execution (No Interference)
 # ==============================================================================
 
+# Flow classes must be at module level to avoid scope issues
+@dataclass
+@flow_type
+class IsolatedFlow:
+    flow_id: int
+    value: int
+
+    @step
+    async def compute(self) -> int:
+        # Simulate work with randomized timing
+        await asyncio.sleep(0.001)
+        return self.value * 2
+
+    @flow
+    async def run(self) -> int:
+        result = await self.compute()
+        return result
+
+
 @pytest.mark.concurrency
 @pytest.mark.asyncio
 async def test_concurrent_flows_dont_interfere(in_memory_storage):
@@ -37,22 +57,6 @@ async def test_concurrent_flows_dont_interfere(in_memory_storage):
     """
     num_flows = 10
     results = []
-
-    @flow_type
-    class IsolatedFlow:
-        flow_id: int
-        value: int
-
-        @step
-        async def compute(self) -> int:
-            # Simulate work with randomized timing
-            await asyncio.sleep(0.001)
-            return self.value * 2
-
-        @flow
-        async def run(self) -> int:
-            result = await self.compute()
-            return result
 
     async def execute_flow(flow_id: int, value: int):
         """Execute one flow."""
@@ -142,6 +146,17 @@ async def test_concurrent_storage_writes_no_corruption(in_memory_storage):
 # TEST 3: Concurrent Flow Scheduling
 # ==============================================================================
 
+@dataclass
+@flow_type
+class ScheduledFlow:
+    scheduler_id: int
+    flow_index: int
+
+    @flow
+    async def run(self):
+        return f"result_{self.scheduler_id}_{self.flow_index}"
+
+
 @pytest.mark.concurrency
 @pytest.mark.asyncio
 async def test_concurrent_flow_scheduling(in_memory_storage):
@@ -152,15 +167,6 @@ async def test_concurrent_flow_scheduling(in_memory_storage):
     """
     num_schedulers = 5
     flows_per_scheduler = 20
-
-    @flow_type
-    class ScheduledFlow:
-        scheduler_id: int
-        flow_index: int
-
-        @flow
-        async def run(self):
-            return f"result_{self.scheduler_id}_{self.flow_index}"
 
     async def scheduler_task(scheduler_id: int):
         """Schedule multiple flows."""
@@ -194,6 +200,21 @@ async def test_concurrent_flow_scheduling(in_memory_storage):
 # TEST 4: Worker Queue Dequeue Race Condition
 # ==============================================================================
 
+@dataclass
+@flow_type
+class WorkerTestFlow:
+    flow_id: int
+
+    @step
+    async def work(self) -> str:
+        await asyncio.sleep(0.01)  # Simulate work
+        return f"processed_by_worker_{self.flow_id}"
+
+    @flow
+    async def run(self) -> str:
+        return await self.work()
+
+
 @pytest.mark.concurrency
 @pytest.mark.asyncio
 @pytest.mark.slow
@@ -206,19 +227,6 @@ async def test_workers_dont_dequeue_same_flow(in_memory_storage):
     """
     num_workers = 5
     num_flows = 20
-
-    @flow_type
-    class WorkerTestFlow:
-        flow_id: int
-
-        @step
-        async def work(self) -> str:
-            await asyncio.sleep(0.01)  # Simulate work
-            return f"processed_by_worker_{self.flow_id}"
-
-        @flow
-        async def run(self) -> str:
-            return await self.work()
 
     # Schedule flows
     scheduler = Scheduler(in_memory_storage)
@@ -278,6 +286,16 @@ async def test_workers_dont_dequeue_same_flow(in_memory_storage):
 # TEST 5: Event Notification Race Conditions
 # ==============================================================================
 
+@dataclass
+@flow_type
+class NotificationTestFlow:
+    data: str
+
+    @flow
+    async def run(self):
+        return self.data
+
+
 @pytest.mark.concurrency
 @pytest.mark.asyncio
 async def test_work_notify_wakes_all_waiting_workers(in_memory_storage):
@@ -291,14 +309,6 @@ async def test_work_notify_wakes_all_waiting_workers(in_memory_storage):
 
     num_workers = 3
     work_received = []
-
-    @flow_type
-    class NotificationTestFlow:
-        data: str
-
-        @flow
-        async def run(self):
-            return self.data
 
     async def worker_wait_for_work(worker_id: str):
         """Worker waits for notification."""
@@ -388,6 +398,21 @@ async def test_interleaved_reads_writes_consistent(in_memory_storage):
 # TEST 7: Flow Completion Race Conditions
 # ==============================================================================
 
+@dataclass
+@flow_type
+class CompletionFlow:
+    flow_id: int
+
+    @step
+    async def work(self) -> int:
+        await asyncio.sleep(0.01)
+        return self.flow_id * 100
+
+    @flow
+    async def run(self) -> int:
+        return await self.work()
+
+
 @pytest.mark.concurrency
 @pytest.mark.asyncio
 async def test_concurrent_flow_completion_updates(in_memory_storage):
@@ -397,19 +422,6 @@ async def test_concurrent_flow_completion_updates(in_memory_storage):
     Multiple flows completing simultaneously should not cause issues.
     """
     num_flows = 20
-
-    @flow_type
-    class CompletionFlow:
-        flow_id: int
-
-        @step
-        async def work(self) -> int:
-            await asyncio.sleep(0.01)
-            return self.flow_id * 100
-
-        @flow
-        async def run(self) -> int:
-            return await self.work()
 
     async def schedule_and_execute(flow_id: int):
         """Schedule, execute, and complete a flow."""
@@ -428,7 +440,10 @@ async def test_concurrent_flow_completion_updates(in_memory_storage):
         outcome = await executor.run(lambda f: f.run())
 
         # Mark complete
-        await in_memory_storage.mark_flow_complete(scheduled.task_id, result=None)
+        await in_memory_storage.complete_flow(
+            task_id=scheduled.task_id,
+            status=TaskStatus.COMPLETE
+        )
 
         return task_id
 
