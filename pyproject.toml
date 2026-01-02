@@ -20,9 +20,11 @@ classifiers = [
 keywords = ["workflow", "durable-execution", "temporal", "async", "llm"]
 
 dependencies = [
-    "aiosqlite==0.21.0",     # Async SQLite storage backend
+    "aiosqlite==0.21.0", # Async SQLite storage backend
     "redis[hiredis]==7.1.0", # Async Redis storage backend (hiredis for performance)
-    "numpy==2.4.0",          # For scientific computation examples (latest stable as of Dec 2024)
+    "numpy==2.4.0", # For scientific computation examples (latest stable as of Dec 2024)
+    "uuid7>=0.1.0", # UUID7 backport for Python 3.11+ (time-ordered UUIDs)
+    "xxhash>=3.0.0", # Fast non-cryptographic hashing (4-6x faster than SHA256)
 ]
 
 [project.optional-dependencies]

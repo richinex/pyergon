@@ -10,10 +10,10 @@ From Dave Cheney:
 "Make the zero value useful" - Instance is immediately usable after __init__.
 """
 
-import uuid
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
+from uuid_extensions import uuid7
 
 from ergon.core import (
     Invocation,
@@ -115,7 +115,7 @@ class InMemoryExecutionLog(ExecutionLog):
 
             # Create new invocation (or overwrite non-Complete/non-WaitingForSignal)
             now = datetime.now()
-            inv_id = str(uuid.uuid4())
+            inv_id = str(uuid7())
 
             invocation = Invocation(
                 id=inv_id,

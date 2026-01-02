@@ -21,6 +21,7 @@ import asyncio
 import pickle
 import functools
 import hashlib
+import xxhash
 from typing import Any, Callable, Optional, TypeVar, Union, TYPE_CHECKING
 
 from ergon.core import (
@@ -179,9 +180,17 @@ def step(
             # IMPORTANT: Hash only method name, NOT parameters
             # This ensures same step gets same ID even if parameters change
             # (parameter changes are detected via params_hash check)
-            import hashlib
-            hash_input = f"{class_name}.{method_name}".encode('utf-8')
-            step_num = int.from_bytes(hashlib.sha256(hash_input).digest()[:4], byteorder='little') & 0x7FFFFFFF
+            # OPTIMIZATION: Cache step IDs (they never change for a given method)
+            hash_key = f"{class_name}.{method_name}"
+            if not hasattr(async_wrapper, '_step_id_cache'):
+                async_wrapper._step_id_cache = {}  # type: ignore
+
+            if hash_key not in async_wrapper._step_id_cache:  # type: ignore
+                # OPTIMIZATION: Using xxhash (4-6x faster than SHA256)
+                step_num = xxhash.xxh64(hash_key.encode('utf-8')).intdigest() & 0x7FFFFFFF
+                async_wrapper._step_id_cache[hash_key] = step_num  # type: ignore
+            else:
+                step_num = async_wrapper._step_id_cache[hash_key]  # type: ignore
 
             # Compute params hash
             # From Rust: let params_hash = hash(&params)
@@ -660,13 +669,13 @@ def flow(
 
 def _compute_params_hash(parameters: bytes) -> int:
     """
-    Compute hash using SHA256 + struct.unpack (stdlib only, zero dependencies).
+    Compute hash using xxHash (4-6x faster than SHA256).
 
-    Performance: struct.unpack is 60%+ faster than int.from_bytes
-    Deterministic: Yes, SHA256 is deterministic across platforms
+    Performance: xxHash is 4-6x faster than SHA256 for non-cryptographic use
+    Deterministic: Yes, xxHash is deterministic across platforms
 
     From Rust: hash(&params) using seahash
-    Note: SHA256 is cryptographic (slower than seahash) but stdlib-only and deterministic
+    Note: xxHash is comparable to seahash in speed, deterministic, and widely used
 
     Args:
         parameters: Serialized parameters
@@ -674,14 +683,7 @@ def _compute_params_hash(parameters: bytes) -> int:
     Returns:
         Hash value as integer (masked to 63 bits for SQLite INTEGER)
     """
-    import struct
-
-    # Pre-compiled struct for performance (cached on function object)
-    if not hasattr(_compute_params_hash, '_struct'):
-        _compute_params_hash._struct = struct.Struct('<Q')  # little-endian unsigned 64-bit
-
-    h = hashlib.sha256(parameters).digest()
-    # struct.unpack is 60%+ faster than int.from_bytes (stdlib best practice)
+    # xxHash provides intdigest() for direct integer output (no struct.unpack needed)
     # Mask to 63 bits for SQLite INTEGER (signed 64-bit, max 2^63-1)
     # Matching Rust's "params_hash as i64" cast behavior
-    return _compute_params_hash._struct.unpack(h[:8])[0] & 0x7FFFFFFFFFFFFFFF
+    return xxhash.xxh64(parameters).intdigest() & 0x7FFFFFFFFFFFFFFF

@@ -27,7 +27,7 @@ Scheduler hides these details (Façade-like simplification).
 
 import os
 import pickle
-import uuid
+from uuid_extensions import uuid7
 from typing import Any, Optional
 
 from ergon.storage.base import ExecutionLog
@@ -151,7 +151,7 @@ class Scheduler:
         """
         # Generate flow_id if not provided
         if flow_id is None:
-            flow_id = str(uuid.uuid4())
+            flow_id = str(uuid7())
 
         # Determine flow type using type_id() method (matches registry)
         # **Rust Reference**: Uses T::type_id() for stable flow type identification

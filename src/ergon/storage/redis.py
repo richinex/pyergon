@@ -39,6 +39,7 @@ From Dave Cheney:
 import pickle
 from typing import Optional
 from datetime import datetime, timezone
+from uuid_extensions import uuid7
 
 try:
     import redis.asyncio as redis
@@ -369,8 +370,7 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        import uuid
-        task_id = str(uuid.uuid4())
+        task_id = str(uuid7())
         flow_key = self._flow_key(task_id)
         now = datetime.now()
 
