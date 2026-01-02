@@ -36,6 +36,7 @@ From Dave Cheney:
 - Return early pattern (guard clauses for existence checks)
 """
 
+import asyncio
 import pickle
 from typing import Optional
 from datetime import datetime, timezone
@@ -92,6 +93,13 @@ class RedisExecutionLog(ExecutionLog):
         self._redis_url = redis_url
         self._max_connections = max_connections
         self._redis: Optional[redis.Redis] = None
+
+        # Notification events (implements WorkNotificationSource and TimerNotificationSource)
+        # From Rust: work_notify: Arc<Notify>, timer_notify: Arc<Notify>, status_notify: Arc<Notify>
+        # Python uses asyncio.Event instead of tokio::sync::Notify
+        self._work_notify = asyncio.Event()
+        self._timer_notify = asyncio.Event()
+        self._status_notify = asyncio.Event()
 
     # ========================================================================
     # Connection Management
@@ -159,33 +167,49 @@ class RedisExecutionLog(ExecutionLog):
         flow_id: str,
         step: int,
         class_name: str,
-        step_name: str,
-        params: bytes
+        method_name: str,
+        parameters: bytes,
+        params_hash: int,
+        delay: Optional[int] = None,
+        retry_policy: Optional['RetryPolicy'] = None
     ) -> Invocation:
         """
         Log the start of a step invocation.
+
+        **Rust Reference**: redis.rs lines 502-624
 
         From Rust ergon: Uses Redis HASH for invocation data,
         atomic MULTI/EXEC for consistency.
         """
         self._check_connected()
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
         inv_key = self._invocation_key(flow_id, step)
+        inv_id = str(uuid7())
 
         # Atomic pipeline: store invocation + add to invocations list
         async with self._redis.pipeline(transaction=True) as pipe:
-            # Store invocation as HASH
+            # Store invocation as HASH (use Unix timestamps like Rust)
+            await pipe.hset(inv_key, "id", inv_id)
             await pipe.hset(inv_key, "flow_id", flow_id)
             await pipe.hset(inv_key, "step", str(step))
             await pipe.hset(inv_key, "class_name", class_name)
-            await pipe.hset(inv_key, "step_name", step_name)
-            await pipe.hset(inv_key, "params", params)
+            await pipe.hset(inv_key, "method_name", method_name)
+            await pipe.hset(inv_key, "parameters", parameters)
+            await pipe.hset(inv_key, "params_hash", str(params_hash))
             await pipe.hset(inv_key, "status", InvocationStatus.PENDING.value)
-            await pipe.hset(inv_key, "attempts", "1")
-            await pipe.hset(inv_key, "created_at", now.isoformat())
-            await pipe.hset(inv_key, "updated_at", now.isoformat())
+            await pipe.hset(inv_key, "attempts", "0")
+            await pipe.hset(inv_key, "created_at", now_ts)
+            await pipe.hset(inv_key, "updated_at", now_ts)
             await pipe.hset(inv_key, "is_retryable", "1")  # Default: retryable
+
+            if delay is not None:
+                await pipe.hset(inv_key, "delay", str(delay))
+
+            if retry_policy is not None:
+                import pickle
+                await pipe.hset(inv_key, "retry_policy", pickle.dumps(retry_policy))
 
             # Add to invocations list
             await pipe.lpush(self._invocations_key(flow_id), inv_key)
@@ -193,29 +217,36 @@ class RedisExecutionLog(ExecutionLog):
             await pipe.execute()
 
         return Invocation(
+            id=inv_id,
             flow_id=flow_id,
             step=step,
+            timestamp=now,
             class_name=class_name,
-            step_name=step_name,
-            params=params,
-            result=None,
+            method_name=method_name,
             status=InvocationStatus.PENDING,
-            attempts=1,
-            is_retryable=True,
-            created_at=now,
-            updated_at=now,
-            fire_at=None,
-            timer_name=""
+            attempts=0,
+            parameters=parameters,
+            params_hash=params_hash,
+            return_value=None,
+            delay=delay,
+            retry_policy=retry_policy,
+            is_retryable=None,
+            timer_fire_at=None,
+            timer_name=None,
+            updated_at=now
         )
 
     async def log_invocation_completion(
         self,
         flow_id: str,
         step: int,
-        result: bytes
+        return_value: bytes,
+        is_retryable: Optional[bool] = None
     ) -> Invocation:
         """
         Log the completion of a step invocation.
+
+        **Rust Reference**: redis.rs lines 626-685
 
         From Dave Cheney: "Only handle an error once"
         Either succeeds or raises, no double error handling.
@@ -231,13 +262,18 @@ class RedisExecutionLog(ExecutionLog):
                 f"Invocation not found: flow_id={flow_id}, step={step}"
             )
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
 
         # Atomic update
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(inv_key, "status", InvocationStatus.COMPLETE.value)
-            await pipe.hset(inv_key, "result", result)
-            await pipe.hset(inv_key, "updated_at", now.isoformat())
+            await pipe.hset(inv_key, "return_value", return_value)
+            await pipe.hset(inv_key, "updated_at", now_ts)
+
+            if is_retryable is not None:
+                await pipe.hset(inv_key, "is_retryable", "1" if is_retryable else "0")
+
             await pipe.execute()
 
         # Fetch and return
@@ -356,40 +392,84 @@ class RedisExecutionLog(ExecutionLog):
     # Queue Operations - Distributed Work Queue
     # ========================================================================
 
-    async def enqueue_flow(
-        self,
-        flow_id: str,
-        flow_type: str,
-        flow_data: bytes
-    ) -> str:
+    async def enqueue_flow(self, flow: ScheduledFlow) -> str:
         """
         Add a flow to the distributed work queue.
 
+        **Rust Reference**: redis.rs lines 858-980
+
         From Rust ergon: Atomic MULTI/EXEC to store metadata + enqueue.
-        Uses RPUSH for FIFO ordering.
+        Uses RPUSH for FIFO ordering, or ZADD for delayed execution.
         """
         self._check_connected()
 
-        task_id = str(uuid7())
+        task_id = flow.task_id
         flow_key = self._flow_key(task_id)
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
-        # Atomic: store flow metadata + enqueue
-        async with self._redis.pipeline(transaction=True) as pipe:
-            # Store flow metadata as HASH
-            await pipe.hset(flow_key, "task_id", task_id)
-            await pipe.hset(flow_key, "flow_id", flow_id)
-            await pipe.hset(flow_key, "flow_type", flow_type)
-            await pipe.hset(flow_key, "flow_data", flow_data)
-            await pipe.hset(flow_key, "status", TaskStatus.PENDING.value)
-            await pipe.hset(flow_key, "created_at", now.isoformat())
-            await pipe.hset(flow_key, "updated_at", now.isoformat())
-            await pipe.hset(flow_key, "retry_count", "0")
+        # Check if flow should be delayed
+        if flow.scheduled_for:
+            scheduled_ts_ms = int(flow.scheduled_for.timestamp() * 1000)
 
-            # Add to pending queue (FIFO)
-            await pipe.rpush("ergon:queue:pending", task_id)
+            # Store flow metadata and add to delayed queue
+            async with self._redis.pipeline(transaction=True) as pipe:
+                await pipe.hset(flow_key, "task_id", task_id)
+                await pipe.hset(flow_key, "flow_id", flow.flow_id)
+                await pipe.hset(flow_key, "flow_type", flow.flow_type)
+                await pipe.hset(flow_key, "flow_data", flow.flow_data)
+                await pipe.hset(flow_key, "status", TaskStatus.PENDING.value)
+                await pipe.hset(flow_key, "created_at", int(flow.created_at.timestamp()))
+                await pipe.hset(flow_key, "updated_at", int(now.timestamp()))
+                await pipe.hset(flow_key, "scheduled_for", scheduled_ts_ms)
+                await pipe.hset(flow_key, "retry_count", str(flow.retry_count))
 
-            await pipe.execute()
+                if flow.parent_metadata:
+                    parent_flow_id, signal_token = flow.parent_metadata
+                    await pipe.hset(flow_key, "parent_flow_id", parent_flow_id)
+                    await pipe.hset(flow_key, "signal_token", signal_token)
+                if flow.version:
+                    await pipe.hset(flow_key, "version", flow.version)
+
+                # Create flow_id -> task_id index for resume_flow
+                await pipe.set(f"ergon:flow_task_map:{flow.flow_id}", task_id)
+
+                # Add to delayed queue
+                await pipe.zadd("ergon:queue:delayed", {task_id: scheduled_ts_ms})
+
+                await pipe.execute()
+        else:
+            # Immediate execution - store and enqueue
+            async with self._redis.pipeline(transaction=True) as pipe:
+                # Store flow metadata as HASH
+                await pipe.hset(flow_key, "task_id", task_id)
+                await pipe.hset(flow_key, "flow_id", flow.flow_id)
+                await pipe.hset(flow_key, "flow_type", flow.flow_type)
+                await pipe.hset(flow_key, "flow_data", flow.flow_data)
+                await pipe.hset(flow_key, "status", TaskStatus.PENDING.value)
+                await pipe.hset(flow_key, "created_at", int(flow.created_at.timestamp()))
+                await pipe.hset(flow_key, "updated_at", int(now.timestamp()))
+                await pipe.hset(flow_key, "retry_count", str(flow.retry_count))
+
+                if flow.parent_metadata:
+                    parent_flow_id, signal_token = flow.parent_metadata
+                    await pipe.hset(flow_key, "parent_flow_id", parent_flow_id)
+                    await pipe.hset(flow_key, "signal_token", signal_token)
+                if flow.version:
+                    await pipe.hset(flow_key, "version", flow.version)
+
+                # Create flow_id -> task_id index for resume_flow
+                await pipe.set(f"ergon:flow_task_map:{flow.flow_id}", task_id)
+
+                # Add to pending queue (FIFO)
+                await pipe.rpush("ergon:queue:pending", task_id)
+
+                await pipe.execute()
+
+            # Wake up one waiting worker (if any)
+            # **Rust Reference**: redis.rs line 976
+            # NOTE: Don't clear here! Worker clears after waking up.
+            # Clearing immediately would lose the notification if worker isn't waiting yet.
+            self._work_notify.set()
 
         return task_id
 
@@ -418,13 +498,15 @@ class RedisExecutionLog(ExecutionLog):
         task_id = task_id_bytes.decode()
 
         flow_key = self._flow_key(task_id)
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
 
         # Check if flow is ready (scheduled_for has passed)
         scheduled_for_bytes = await self._redis.hget(flow_key, "scheduled_for")
 
         if scheduled_for_bytes:
-            scheduled_for = datetime.fromisoformat(scheduled_for_bytes.decode())
+            scheduled_for_ms = int(scheduled_for_bytes.decode())
+            scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=timezone.utc)
             if scheduled_for > now:
                 # Not ready yet, push back to queue
                 await self._redis.rpush("ergon:queue:pending", task_id)
@@ -434,11 +516,11 @@ class RedisExecutionLog(ExecutionLog):
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(flow_key, "status", TaskStatus.RUNNING.value)
             await pipe.hset(flow_key, "locked_by", worker_id)
-            await pipe.hset(flow_key, "updated_at", now.isoformat())
-            await pipe.hset(flow_key, "claimed_at", now.isoformat())
+            await pipe.hset(flow_key, "updated_at", now_ts)
+            await pipe.hset(flow_key, "claimed_at", now_ts)
 
             # Add to running index (sorted set, score = start time)
-            await pipe.zadd("ergon:running", {task_id: now.timestamp()})
+            await pipe.zadd("ergon:running", {task_id: now_ts})
 
             await pipe.execute()
 
@@ -478,13 +560,14 @@ class RedisExecutionLog(ExecutionLog):
         if not exists:
             raise StorageError(f"Flow not found: task_id={task_id}")
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
 
         # Atomic: update status + remove from running index
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(flow_key, "status", status.value)
-            await pipe.hset(flow_key, "completed_at", now.isoformat())
-            await pipe.hset(flow_key, "updated_at", now.isoformat())
+            await pipe.hset(flow_key, "completed_at", now_ts)
+            await pipe.hset(flow_key, "updated_at", now_ts)
             if error_message is not None:
                 await pipe.hset(flow_key, "error_message", error_message)
 
@@ -541,14 +624,19 @@ class RedisExecutionLog(ExecutionLog):
             await pipe.hset(
                 inv_key, "status", InvocationStatus.WAITING_FOR_TIMER.value
             )
-            await pipe.hset(inv_key, "fire_at", timer_fire_at.isoformat())
-            await pipe.hset(inv_key, "timer_name", timer_name)
+            await pipe.hset(inv_key, "fire_at", fire_at_millis)
+            await pipe.hset(inv_key, "timer_name", timer_name or "")
 
             # Add to sorted set (score = fire_at_millis)
             timer_member = f"{flow_id}:{step}"
             await pipe.zadd("ergon:timers:pending", {timer_member: fire_at_millis})
 
             await pipe.execute()
+
+        # Notify timer processor that a new timer was scheduled
+        # **Rust Reference**: redis.rs line 1438
+        self._timer_notify.set()
+        self._timer_notify.clear()  # Reset for next notification
 
     async def get_expired_timers(
         self,
@@ -656,7 +744,280 @@ class RedisExecutionLog(ExecutionLog):
             unit_value
         )
 
+        # Notify timer processor if we successfully claimed a timer
+        # **Rust Reference**: redis.rs lines 1380-1382
+        if claimed == 1:
+            self._timer_notify.set()
+            self._timer_notify.clear()  # Reset for next notification
+
         return claimed == 1
+
+    async def get_next_timer_fire_time(self) -> Optional[datetime]:
+        """
+        Get the next timer fire time from the pending timers sorted set.
+
+        **Rust Reference**: redis.rs lines 1387-1407
+
+        Returns:
+            Timestamp of the next timer to fire, or None if no timers pending
+        """
+        self._check_connected()
+
+        # Get the first entry from sorted set (lowest score = earliest timer)
+        result = await self._redis.zrange(
+            "ergon:timers:pending",
+            0, 0,
+            withscores=True
+        )
+
+        if result:
+            _, timestamp_ms = result[0]
+            return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+
+        return None
+
+    # ========================================================================
+    # Signal Operations
+    # ========================================================================
+
+    async def log_signal(
+        self,
+        flow_id: str,
+        step: int,
+        signal_name: str
+    ) -> None:
+        """
+        Log that an invocation is waiting for a signal.
+
+        **Rust Reference**: redis.rs lines 1443-1466
+
+        Updates invocation status to WAITING_FOR_SIGNAL and stores signal_name.
+        """
+        self._check_connected()
+
+        inv_key = self._invocation_key(flow_id, step)
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
+
+        async with self._redis.pipeline(transaction=True) as pipe:
+            await pipe.hset(
+                inv_key,
+                "status",
+                InvocationStatus.WAITING_FOR_SIGNAL.value
+            )
+            await pipe.hset(inv_key, "timer_name", signal_name)
+            await pipe.hset(inv_key, "updated_at", now_ts)
+            await pipe.execute()
+
+    async def store_suspension_result(
+        self,
+        flow_id: str,
+        step: int,
+        suspension_key: str,
+        result: bytes
+    ) -> None:
+        """
+        Store the result of a suspension (signal or timer completion).
+
+        **Rust Reference**: redis.rs lines 1536-1561
+
+        Args:
+            flow_id: Flow identifier
+            step: Step number
+            suspension_key: Signal name or timer name
+            result: Serialized result value
+        """
+        self._check_connected()
+
+        # Include suspension_key to support multiple suspensions at same step
+        key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
+
+        # Store with TTL (30 days default)
+        await self._redis.setex(key, 30 * 24 * 3600, result)
+
+    async def get_suspension_result(
+        self,
+        flow_id: str,
+        step: int,
+        suspension_key: str
+    ) -> Optional[bytes]:
+        """
+        Retrieve the result of a suspension.
+
+        **Rust Reference**: redis.rs lines 1563-1578
+
+        Returns:
+            Serialized result if available, None otherwise
+        """
+        self._check_connected()
+
+        key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
+        return await self._redis.get(key)
+
+    async def remove_suspension_result(
+        self,
+        flow_id: str,
+        step: int,
+        suspension_key: str
+    ) -> None:
+        """
+        Remove a suspension result after it's been consumed.
+
+        **Rust Reference**: redis.rs lines 1580-1599
+        """
+        self._check_connected()
+
+        key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
+        await self._redis.delete(key)
+
+    async def get_waiting_signals(self) -> list:
+        """
+        Get all invocations waiting for signals.
+
+        **Rust Reference**: redis.rs lines 1601-1659
+
+        Returns:
+            List of SignalInfo tuples (flow_id, step, signal_name)
+        """
+        self._check_connected()
+
+        signals = []
+
+        # Scan for all invocation keys
+        async for inv_key in self._redis.scan_iter(match="ergon:inv:*"):
+            status = await self._redis.hget(inv_key, "status")
+
+            if status and status.decode() == InvocationStatus.WAITING_FOR_SIGNAL.value:
+                # Parse key format: "ergon:inv:flow_id:step"
+                parts = inv_key.decode().split(':')
+                if len(parts) == 4:
+                    flow_id = parts[2]
+                    try:
+                        step = int(parts[3])
+                        signal_name_bytes = await self._redis.hget(inv_key, "timer_name")
+                        signal_name = signal_name_bytes.decode() if signal_name_bytes else None
+
+                        signals.append({
+                            'flow_id': flow_id,
+                            'step': step,
+                            'signal_name': signal_name
+                        })
+                    except ValueError:
+                        continue
+
+        return signals
+
+    async def update_is_retryable(
+        self,
+        flow_id: str,
+        step: int,
+        is_retryable: bool
+    ) -> None:
+        """
+        Update the is_retryable flag for an invocation.
+
+        **Rust Reference**: redis.rs lines 792-803
+        """
+        self._check_connected()
+
+        inv_key = self._invocation_key(flow_id, step)
+        value = "1" if is_retryable else "0"
+
+        await self._redis.hset(inv_key, "is_retryable", value)
+
+    async def resume_flow(self, flow_id: str) -> bool:
+        """
+        Resume a suspended flow (after signal or timer completion).
+
+        **Rust Reference**: redis.rs lines 1468-1532
+
+        Uses flow_id -> task_id index for O(1) lookup.
+        Atomically checks SUSPENDED status and updates to PENDING.
+        Re-enqueues to pending queue if successful.
+
+        Returns:
+            True if flow was resumed, False if already resumed or not suspended
+        """
+        self._check_connected()
+
+        # O(1) lookup using flow_id -> task_id index
+        task_id = await self._redis.get(f"ergon:flow_task_map:{flow_id}")
+
+        if not task_id:
+            return False
+
+        task_id = task_id.decode()
+        flow_key = self._flow_key(task_id)
+
+        # Atomic check-and-update using Lua script
+        script = """
+        local flow_key = KEYS[1]
+        local now = ARGV[1]
+
+        local status = redis.call('HGET', flow_key, 'status')
+
+        if status == 'SUSPENDED' then
+            redis.call('HSET', flow_key, 'status', 'PENDING')
+            redis.call('HDEL', flow_key, 'locked_by')
+            redis.call('HSET', flow_key, 'updated_at', now)
+            return 1
+        else
+            return 0
+        end
+        """
+
+        now = datetime.now(timezone.utc).timestamp()
+        resumed = await self._redis.eval(script, 1, flow_key, int(now))
+
+        if resumed == 1:
+            # Re-enqueue to pending queue
+            await self._redis.rpush("ergon:queue:pending", task_id)
+
+            # Wake up one waiting worker since we just made a flow available
+            # **Rust Reference**: redis.rs line 1521
+            # NOTE: Don't clear here! Worker clears after waking up.
+            self._work_notify.set()
+
+            return True
+
+        return False
+
+    async def retry_flow(
+        self,
+        task_id: str,
+        error_message: str,
+        delay_seconds: int
+    ) -> None:
+        """
+        Retry a failed flow after a delay.
+
+        **Rust Reference**: redis.rs lines 1121-1166
+
+        Updates flow metadata, increments retry_count, and adds to delayed queue.
+        """
+        self._check_connected()
+
+        flow_key = self._flow_key(task_id)
+        scheduled_for = datetime.now(timezone.utc).timestamp() + delay_seconds
+        scheduled_for_ms = int(scheduled_for * 1000)
+
+        now = datetime.now(timezone.utc).timestamp()
+
+        # Update flow and add to delayed queue
+        async with self._redis.pipeline(transaction=True) as pipe:
+            await pipe.hincrby(flow_key, "retry_count", 1)
+            await pipe.hset(flow_key, "error_message", error_message)
+            await pipe.hset(flow_key, "status", TaskStatus.PENDING.value)
+            await pipe.hset(flow_key, "scheduled_for", scheduled_for_ms)
+            await pipe.hdel(flow_key, "locked_by")
+            await pipe.hset(flow_key, "updated_at", int(now))
+            await pipe.zadd("ergon:queue:delayed", {task_id: scheduled_for_ms})
+            await pipe.execute()
+
+        # Notify workers that new work is available (or will be available soon)
+        # **Rust Reference**: Similar to SQLite implementation
+        self._work_notify.set()
+        self._work_notify.clear()  # Reset for next notification
 
     async def reset(self) -> None:
         """
@@ -693,46 +1054,71 @@ class RedisExecutionLog(ExecutionLog):
         """
         Parse invocation from Redis HASH data.
 
+        **Rust Reference**: redis.rs lines 1329-1445
+
         From Dave Cheney: "Errors are values"
         Returns Invocation or raises StorageError.
         """
         try:
+            inv_id = data[b"id"].decode()
             flow_id = data[b"flow_id"].decode()
             step = int(data[b"step"].decode())
             class_name = data[b"class_name"].decode()
-            step_name = data[b"step_name"].decode()
-            params = data[b"params"]
+            method_name = data[b"method_name"].decode()
+            parameters = data[b"parameters"]
+            params_hash = int(data[b"params_hash"].decode())
             status = InvocationStatus(data[b"status"].decode())
             attempts = int(data[b"attempts"].decode())
-            is_retryable = data[b"is_retryable"].decode() == "1"
+            is_retryable_str = data.get(b"is_retryable", b"1").decode()
+            is_retryable = is_retryable_str == "1" if is_retryable_str else None
 
-            created_at = datetime.fromisoformat(data[b"created_at"].decode())
-            updated_at = datetime.fromisoformat(data[b"updated_at"].decode())
+            # Parse Unix timestamps
+            created_at_ts = int(data[b"created_at"].decode())
+            timestamp = datetime.fromtimestamp(created_at_ts, tz=timezone.utc)
 
-            result = data.get(b"result")
+            updated_at_ts = int(data.get(b"updated_at", b"0").decode())
+            updated_at = datetime.fromtimestamp(updated_at_ts, tz=timezone.utc) if updated_at_ts else timestamp
 
-            fire_at = None
+            return_value = data.get(b"return_value")
+
+            delay = None
+            if b"delay" in data:
+                delay = int(data[b"delay"].decode())
+
+            retry_policy = None
+            if b"retry_policy" in data:
+                retry_policy = pickle.loads(data[b"retry_policy"])
+
+            timer_fire_at = None
             if b"fire_at" in data:
-                fire_at = datetime.fromisoformat(data[b"fire_at"].decode())
+                fire_at_ms = int(data[b"fire_at"].decode())
+                if fire_at_ms > 0:
+                    timer_fire_at = datetime.fromtimestamp(fire_at_ms / 1000, tz=timezone.utc)
 
-            timer_name = ""
+            timer_name = None
             if b"timer_name" in data:
                 timer_name = data[b"timer_name"].decode()
+                if not timer_name:
+                    timer_name = None
 
             return Invocation(
+                id=inv_id,
                 flow_id=flow_id,
                 step=step,
+                timestamp=timestamp,
                 class_name=class_name,
-                step_name=step_name,
-                params=params,
-                result=result,
+                method_name=method_name,
                 status=status,
                 attempts=attempts,
+                parameters=parameters,
+                params_hash=params_hash,
+                return_value=return_value,
+                delay=delay,
+                retry_policy=retry_policy,
                 is_retryable=is_retryable,
-                created_at=created_at,
-                updated_at=updated_at,
-                fire_at=fire_at,
-                timer_name=timer_name
+                timer_fire_at=timer_fire_at,
+                timer_name=timer_name,
+                updated_at=updated_at
             )
         except (KeyError, ValueError, UnicodeDecodeError) as e:
             raise StorageError(f"Failed to parse invocation: {e}")
@@ -740,6 +1126,8 @@ class RedisExecutionLog(ExecutionLog):
     def _parse_scheduled_flow(self, data: dict) -> ScheduledFlow:
         """
         Parse scheduled flow from Redis HASH data.
+
+        **Rust Reference**: redis.rs lines 1168-1277
 
         From Dave Cheney: "Return early rather than nesting deeply"
         Simple parse → return result.
@@ -752,19 +1140,40 @@ class RedisExecutionLog(ExecutionLog):
             status = TaskStatus(data[b"status"].decode())
             retry_count = int(data.get(b"retry_count", b"0").decode())
 
-            created_at = datetime.fromisoformat(data[b"created_at"].decode())
+            # Parse timestamps as Unix timestamps (integers)
+            created_at_ts = int(data[b"created_at"].decode())
+            created_at = datetime.fromtimestamp(created_at_ts, tz=timezone.utc)
+
+            updated_at_ts = int(data.get(b"updated_at", b"0").decode())
+            updated_at = datetime.fromtimestamp(updated_at_ts, tz=timezone.utc) if updated_at_ts else created_at
 
             locked_by = None
             if b"locked_by" in data:
                 locked_by = data[b"locked_by"].decode()
 
-            claimed_at = None
-            if b"claimed_at" in data:
-                claimed_at = datetime.fromisoformat(data[b"claimed_at"].decode())
+            error_message = None
+            if b"error_message" in data:
+                error_message = data[b"error_message"].decode()
 
-            completed_at = None
-            if b"completed_at" in data:
-                completed_at = datetime.fromisoformat(data[b"completed_at"].decode())
+            scheduled_for = None
+            if b"scheduled_for" in data:
+                scheduled_for_ms = int(data[b"scheduled_for"].decode())
+                if scheduled_for_ms > 0:
+                    scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=timezone.utc)
+
+            # Parse parent metadata
+            parent_metadata = None
+            if b"parent_flow_id" in data:
+                parent_flow_id = data[b"parent_flow_id"].decode()
+                signal_token = data.get(b"signal_token", b"").decode()
+                if parent_flow_id:
+                    parent_metadata = (parent_flow_id, signal_token)
+
+            version = None
+            if b"version" in data:
+                version = data[b"version"].decode()
+                if not version:
+                    version = None
 
             return ScheduledFlow(
                 task_id=task_id,
@@ -774,9 +1183,58 @@ class RedisExecutionLog(ExecutionLog):
                 status=status,
                 locked_by=locked_by,
                 retry_count=retry_count,
-                scheduled_at=created_at,  # Use created_at as scheduled_at
-                claimed_at=claimed_at,
-                completed_at=completed_at
+                created_at=created_at,
+                updated_at=updated_at,
+                error_message=error_message,
+                scheduled_for=scheduled_for,
+                parent_metadata=parent_metadata,
+                version=version
             )
         except (KeyError, ValueError, UnicodeDecodeError) as e:
             raise StorageError(f"Failed to parse scheduled flow: {e}")
+
+    # ========================================================================
+    # Notification Sources - Event-Driven Wakeup
+    # ========================================================================
+
+    def work_notify(self) -> asyncio.Event:
+        """
+        Return event for work notifications (WorkNotificationSource protocol).
+
+        **Rust Reference**: `src/storage/redis.rs` lines 1891-1895
+
+        Workers use this to wait for work instead of polling. This event is set
+        when new work is enqueued or flows are resumed.
+
+        Returns:
+            asyncio.Event that workers wait on
+        """
+        return self._work_notify
+
+    def timer_notify(self) -> asyncio.Event:
+        """
+        Return event for timer notifications (TimerNotificationSource protocol).
+
+        **Rust Reference**: `src/storage/redis.rs` lines 1897-1901
+
+        Timer processors use this to wake up when timers are scheduled or claimed,
+        instead of polling at fixed intervals.
+
+        Returns:
+            asyncio.Event that timer processors wait on
+        """
+        return self._timer_notify
+
+    def status_notify(self) -> asyncio.Event:
+        """
+        Return event for flow status change notifications.
+
+        **Rust Reference**: `src/storage/redis.rs` lines 1904-1910
+
+        Callers can use this to wait for flow status changes (completion, failure, etc.)
+        instead of polling.
+
+        Returns:
+            asyncio.Event that is set when any flow status changes
+        """
+        return self._status_notify
