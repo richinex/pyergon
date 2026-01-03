@@ -20,13 +20,15 @@ from pyergon.decorators import flow, flow_type, step
 from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    yield loop
-    loop.close()
+def pytest_sessionfinish(session, exitstatus):
+    """Force cleanup after all tests complete to prevent CI hanging."""
+    import os
+    import signal
+
+    # In CI environments only, force exit to prevent hanging
+    if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+        # Force exit immediately with the pytest exit status
+        os._exit(exitstatus)
 
 
 @pytest.fixture
