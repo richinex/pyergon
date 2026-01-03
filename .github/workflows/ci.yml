@@ -66,9 +66,12 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run tests
-        run: uv run pytest -v --cov=src/pyergon --cov-report=xml --cov-report=term-missing
+        run: |
+          uv run pytest -v --cov=src/pyergon --cov-report=term-missing --tb=short
+          echo "✓ Tests completed successfully"
         env:
           PYTHONPATH: src
+        timeout-minutes: 5
 
   build:
     name: Build Package
