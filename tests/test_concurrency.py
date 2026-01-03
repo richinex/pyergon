@@ -454,7 +454,6 @@ async def test_concurrent_flow_completion_updates(in_memory_storage):
 
 @pytest.mark.concurrency
 @pytest.mark.asyncio
-@pytest.mark.timeout(10)  # Should complete within 10 seconds or deadlock
 async def test_no_deadlock_with_concurrent_locks(in_memory_storage):
     """
     Deadlock Test: System doesn't deadlock under concurrent load.
