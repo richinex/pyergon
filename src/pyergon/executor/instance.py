@@ -206,9 +206,7 @@ class Executor(Generic[T]):
             # In Python, we use this exception as a control flow mechanism.
             suspend_reason = ctx.take_suspend_reason()
             if suspend_reason is None:
-                raise RuntimeError(
-                    "_SuspendExecution raised but no suspend_reason set in context"
-                )
+                raise RuntimeError("_SuspendExecution raised but no suspend_reason set in context")
             return Suspended(reason=suspend_reason)
 
         except Exception as e:

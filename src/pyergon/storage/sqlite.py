@@ -871,7 +871,6 @@ class SqliteExecutionLog(ExecutionLog):
 
         rows = await cursor.fetchall()
 
-
         return [
             TimerInfo(
                 flow_id=row[0],
