@@ -29,10 +29,11 @@ Like GameReport (Chapter 8), worker defines fixed algorithm with variation point
 """
 
 import asyncio
-import pickle
 import logging
+import pickle
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Callable, Awaitable, Optional, Dict, TypeVar, Generic
+from typing import Any, Generic, TypeVar
 from uuid import UUID
 
 from pyergon.core import ScheduledFlow
@@ -41,7 +42,7 @@ from pyergon.storage.base import ExecutionLog
 logger = logging.getLogger(__name__)
 
 # Type variable for storage backend
-S = TypeVar('S', bound=ExecutionLog)
+S = TypeVar("S", bound=ExecutionLog)
 
 
 class Registry(Generic[S]):
@@ -78,13 +79,9 @@ class Registry(Generic[S]):
         """
         # Maps flow_type_id -> executor function
         # Executor signature: (flow_data: bytes, flow_id: UUID, storage: S, parent_metadata: Optional[tuple]) -> FlowOutcome
-        self._executors: Dict[str, Callable] = {}
+        self._executors: dict[str, Callable] = {}
 
-    def register(
-        self,
-        flow_class: type,
-        executor: Callable[[Any], Awaitable[Any]]
-    ) -> None:
+    def register(self, flow_class: type, executor: Callable[[Any], Awaitable[Any]]) -> None:
         """
         Registers a flow type with its executor function.
 
@@ -114,17 +111,14 @@ class Registry(Generic[S]):
 
         # Get stable type ID (Rust uses T::type_id())
         # Python @flow decorator adds type_id() method
-        if hasattr(flow_class, 'type_id'):
+        if hasattr(flow_class, "type_id"):
             type_name = flow_class.type_id()
         else:
             # Fallback to class name only (for non-@flow classes)
             type_name = flow_class.__name__
 
         async def boxed_executor(
-            flow_data: bytes,
-            flow_id: UUID,
-            storage: S,
-            parent_metadata: Optional[tuple] = None
+            flow_data: bytes, flow_id: UUID, storage: S, parent_metadata: tuple | None = None
         ):
             """
             Boxed executor that mirrors Rust's BoxedExecutor behavior.
@@ -145,11 +139,7 @@ class Registry(Generic[S]):
                 return Completed(result=Exception(f"failed to deserialize flow: {e}"))
 
             # Create executor (Rust line 296)
-            exec = Executor(
-                flow=flow_instance,
-                storage=storage,
-                flow_id=flow_id
-            )
+            exec = Executor(flow=flow_instance, storage=storage, flow_id=flow_id)
 
             # Execute the flow with user's closure (Rust lines 298-302)
             # The executor expects a lambda that calls the user's method
@@ -163,7 +153,7 @@ class Registry(Generic[S]):
         logger.debug(f"Registered flow type: {type_name}")
         self._executors[type_name] = boxed_executor
 
-    def get_executor(self, flow_type: str) -> Optional[Callable]:
+    def get_executor(self, flow_type: str) -> Callable | None:
         """
         Gets an executor for a flow type.
 
@@ -223,7 +213,7 @@ class Worker:
         poll_interval: float = 1.0,
         timer_interval: float = 0.1,
         max_retries: int = 3,
-        backoff_base: float = 2.0
+        backoff_base: float = 2.0,
     ):
         """
         Initialize worker with storage backend.
@@ -256,7 +246,7 @@ class Worker:
         self._poll_interval_with_jitter = poll_interval + (jitter_ms / 1000.0)
 
         # Signal processing configuration
-        self._signal_source: Optional[Any] = None  # SignalSource protocol
+        self._signal_source: Any | None = None  # SignalSource protocol
         self._signal_poll_interval: float = 0.5  # 500ms default
 
         # Registry pattern: Flow type → executor function (mirrors Rust)
@@ -270,7 +260,7 @@ class Worker:
         # Event-driven notification support (runtime protocol checking)
         # From Rust: Worker requires WorkNotificationSource at compile time via trait bounds
         # Python: Runtime isinstance() check provides flexibility
-        from pyergon.storage import WorkNotificationSource, TimerNotificationSource
+        from pyergon.storage import TimerNotificationSource, WorkNotificationSource
 
         self._supports_work_notifications = isinstance(storage, WorkNotificationSource)
         self._supports_timer_notifications = isinstance(storage, TimerNotificationSource)
@@ -293,7 +283,7 @@ class Worker:
     # Builder Pattern - Fluent Configuration
     # ====================================================================
 
-    def with_timers(self, interval: float = 0.1) -> 'Worker':
+    def with_timers(self, interval: float = 0.1) -> "Worker":
         """
         Enable timer processing (builder pattern).
 
@@ -311,7 +301,7 @@ class Worker:
         self._timer_interval = interval
         return self
 
-    def with_poll_interval(self, interval: float) -> 'Worker':
+    def with_poll_interval(self, interval: float) -> "Worker":
         """
         Configure polling interval (builder pattern).
 
@@ -331,7 +321,7 @@ class Worker:
         self._poll_interval_with_jitter = interval + (jitter_ms / 1000.0)
         return self
 
-    def with_signals(self, signal_source: Any, poll_interval: float = 0.5) -> 'Worker':
+    def with_signals(self, signal_source: Any, poll_interval: float = 0.5) -> "Worker":
         """
         Enable external signal processing (builder pattern).
 
@@ -360,9 +350,7 @@ class Worker:
     # ====================================================================
 
     async def register(
-        self,
-        flow_class: type,
-        executor: Optional[Callable[[Any], Awaitable[Any]]] = None
+        self, flow_class: type, executor: Callable[[Any], Awaitable[Any]] | None = None
     ) -> None:
         """
         Register a flow type with its executor function.
@@ -392,16 +380,18 @@ class Worker:
             flow_method = None
             for name in dir(flow_class):
                 attr = getattr(flow_class, name)
-                if callable(attr) and hasattr(attr, '_is_ergon_flow_method'):
+                if callable(attr) and hasattr(attr, "_is_ergon_flow_method"):
                     flow_method = name
                     break
 
             if flow_method:
                 # Found @flow method - use it
-                executor = lambda flow, method=flow_method: getattr(flow, method)()
+                def executor(flow, method=flow_method):
+                    return getattr(flow, method)()
             else:
                 # Fallback to 'run' method for backward compatibility
-                executor = lambda flow: flow.run()
+                def executor(flow):
+                    return flow.run()
 
         # Delegate to registry (mirrors Rust pattern)
         self._registry.register(flow_class, executor)
@@ -410,7 +400,7 @@ class Worker:
     # Main Loop - Template Method Pattern
     # ====================================================================
 
-    async def start(self) -> 'WorkerHandle':
+    async def start(self) -> "WorkerHandle":
         """
         Start the worker main loop.
 
@@ -465,18 +455,24 @@ class Worker:
                     # **Rust Pattern**: After successfully dequeuing, immediately loop again!
                     # Only sleep when queue is empty (got_flow=False)
                     got_flow = await self._process_flow()
-                    logger.debug(f"Worker {self._worker_id}: _process_flow() returned got_flow={got_flow}")
+                    logger.debug(
+                        f"Worker {self._worker_id}: _process_flow() returned got_flow={got_flow}"
+                    )
 
                     # If we got a flow, immediately loop to check for more work!
                     # From Rust lines 867-874: background task only waits when !got_task
                     if got_flow:
-                        logger.debug(f"Worker {self._worker_id}: Got flow, looping immediately for more work")
+                        logger.debug(
+                            f"Worker {self._worker_id}: Got flow, looping immediately for more work"
+                        )
                         continue  # Skip waiting, go directly to next iteration
 
                     # No flow found - _process_flow() already waited on work_notify
                     # Just loop immediately to check timers/signals/flows again
                     # From Rust: select! continuously loops, all waiting is event-driven (no sleep!)
-                    logger.debug(f"Worker {self._worker_id}: No flow, looping to check timers/signals/flows")
+                    logger.debug(
+                        f"Worker {self._worker_id}: No flow, looping to check timers/signals/flows"
+                    )
 
                 except Exception as e:
                     logger.error(f"Worker {self._worker_id} error: {e}")
@@ -528,27 +524,23 @@ class Worker:
                 claimed = await self._storage.claim_timer(flow_id, step)
 
                 if claimed:
-                    logger.info(
-                        f"Timer fired: flow={flow_id} step={step} name={timer_name!r}"
-                    )
+                    logger.info(f"Timer fired: flow={flow_id} step={step} name={timer_name!r}")
 
                     # Store timer result (marks timer as fired)
                     # **Rust Reference**: lines 82-112
                     # Use same payload structure as signals/child flows
                     import pickle
+
                     payload = {
-                        'success': True,
-                        'data': b'',  # Empty - timer doesn't carry data
-                        'is_retryable': None
+                        "success": True,
+                        "data": b"",  # Empty - timer doesn't carry data
+                        "is_retryable": None,
                     }
                     result_bytes = pickle.dumps(payload)
 
                     try:
                         await self._storage.store_suspension_result(
-                            flow_id,
-                            step,
-                            timer_name,
-                            result_bytes
+                            flow_id, step, timer_name, result_bytes
                         )
                     except Exception as e:
                         logger.warning(
@@ -616,7 +608,7 @@ class Worker:
                             signal_info.flow_id,
                             signal_info.step,
                             signal_info.signal_name,
-                            signal_data
+                            signal_data,
                         )
 
                         # Consume signal so we don't re-process
@@ -636,7 +628,9 @@ class Worker:
                             )
 
                     except Exception as e:
-                        logger.warning(f"Failed to store signal params for '{signal_info.signal_name}': {e}")
+                        logger.warning(
+                            f"Failed to store signal params for '{signal_info.signal_name}': {e}"
+                        )
 
         except Exception as e:
             logger.error(f"Signal processing error: {e}")
@@ -677,18 +671,21 @@ class Worker:
                         # Jitter prevents thundering herd (all workers polling simultaneously)
                         try:
                             await asyncio.wait_for(
-                                self._work_notify.wait(),
-                                timeout=self._poll_interval_with_jitter
+                                self._work_notify.wait(), timeout=self._poll_interval_with_jitter
                             )
                             # Clear the event after waking up so we wait again next time
                             self._work_notify.clear()
-                            logger.debug(f"Worker {self._worker_id}: Woke from notification, retrying dequeue")
+                            logger.debug(
+                                f"Worker {self._worker_id}: Woke from notification, retrying dequeue"
+                            )
                             # Loop back and try to dequeue again immediately!
                             continue
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             # Timeout - return False (no flow processed)
                             # Main loop will check timers/signals then loop again
-                            logger.debug(f"Worker {self._worker_id}: Notification timeout, no flow found")
+                            logger.debug(
+                                f"Worker {self._worker_id}: Notification timeout, no flow found"
+                            )
                             return False
                     # else: polling mode - return False
                     return False
@@ -726,12 +723,12 @@ class Worker:
         From Dave Cheney: "Only handle an error once"
         Error handling is delegated to execution.handle_flow_error().
         """
-        from pyergon.executor.outcome import Completed, Suspended
         from pyergon.executor.execution import (
             handle_flow_completion,
             handle_flow_error,
-            handle_suspended_flow
+            handle_suspended_flow,
         )
+        from pyergon.executor.outcome import Completed, Suspended
 
         try:
             # Get executor from registry (Rust lines 1026-1029)
@@ -752,7 +749,7 @@ class Worker:
                     flow=scheduled_flow,
                     flow_task_id=scheduled_flow.task_id,
                     error=error,
-                    parent_metadata=parent_metadata
+                    parent_metadata=parent_metadata,
                 )
                 return
 
@@ -761,10 +758,7 @@ class Worker:
             # Execute via registry (Rust line 1036)
             # Executor signature: (flow_data, flow_id, storage, parent_metadata) -> FlowOutcome
             outcome = await executor(
-                scheduled_flow.flow_data,
-                scheduled_flow.flow_id,
-                self._storage,
-                parent_metadata
+                scheduled_flow.flow_data, scheduled_flow.flow_id, self._storage, parent_metadata
             )
 
             # Handle outcome
@@ -776,7 +770,7 @@ class Worker:
                     worker_id=self._worker_id,
                     flow_task_id=scheduled_flow.task_id,
                     flow_id=scheduled_flow.flow_id,
-                    reason=outcome.reason
+                    reason=outcome.reason,
                 )
 
             elif isinstance(outcome, Completed):
@@ -788,7 +782,7 @@ class Worker:
                         worker_id=self._worker_id,
                         flow_task_id=scheduled_flow.task_id,
                         flow_id=scheduled_flow.flow_id,
-                        parent_metadata=scheduled_flow.parent_metadata
+                        parent_metadata=scheduled_flow.parent_metadata,
                     )
                 else:
                     # Error - result is an Exception
@@ -798,7 +792,7 @@ class Worker:
                         flow=scheduled_flow,
                         flow_task_id=scheduled_flow.task_id,
                         error=outcome.result,  # The exception
-                        parent_metadata=scheduled_flow.parent_metadata
+                        parent_metadata=scheduled_flow.parent_metadata,
                     )
 
         except Exception as e:
@@ -815,9 +809,8 @@ class Worker:
                 flow=scheduled_flow,
                 flow_task_id=scheduled_flow.task_id,
                 error=e,
-                parent_metadata=scheduled_flow.parent_metadata
+                parent_metadata=scheduled_flow.parent_metadata,
             )
-
 
     # ====================================================================
     # Shutdown
@@ -877,4 +870,5 @@ class WorkerError(Exception):
     From Dave Cheney: "Errors are values"
     Custom exception with context.
     """
+
     pass

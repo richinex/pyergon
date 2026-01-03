@@ -27,8 +27,10 @@ Scheduler hides these details (Façade-like simplification).
 
 import os
 import pickle
+from datetime import UTC
+from typing import Any
+
 from uuid_extensions import uuid7
-from typing import Any, Optional
 
 from pyergon.storage.base import ExecutionLog
 
@@ -80,7 +82,7 @@ class Scheduler:
         print(f"Scheduled task: {task_id}")
     """
 
-    def __init__(self, storage: ExecutionLog, version: Optional[str] = None):
+    def __init__(self, storage: ExecutionLog, version: str | None = None):
         """
         Initialize scheduler with storage backend.
 
@@ -103,11 +105,7 @@ class Scheduler:
         self._storage = storage
         self._version = version
 
-    async def schedule(
-        self,
-        flow_instance: Any,
-        flow_id: Optional[str] = None
-    ) -> str:
+    async def schedule(self, flow_instance: Any, flow_id: str | None = None) -> str:
         """
         Schedule a flow for distributed execution.
 
@@ -156,7 +154,7 @@ class Scheduler:
         # Determine flow type using type_id() method (matches registry)
         # **Rust Reference**: Uses T::type_id() for stable flow type identification
         # This MUST match what Worker.register() stores in the registry
-        if hasattr(flow_instance.__class__, 'type_id'):
+        if hasattr(flow_instance.__class__, "type_id"):
             flow_type = flow_instance.__class__.type_id()
         else:
             # Fallback to class name for non-@flow classes
@@ -168,17 +166,16 @@ class Scheduler:
         try:
             flow_data = pickle.dumps(flow_instance)
         except Exception as e:
-            raise SchedulerError(
-                f"Failed to serialize flow {flow_type}: {e}"
-            ) from e
+            raise SchedulerError(f"Failed to serialize flow {flow_type}: {e}") from e
 
         # Create ScheduledFlow object
         # From Rust: child_flow.rs lines 248-266 (creating ScheduledFlow for child)
         # Same structure applies for all flows - child or top-level
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from pyergon.core import ScheduledFlow, TaskStatus
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         task_id = flow_id  # In Rust, task_id == flow_id for top-level flows
 
         scheduled_flow = ScheduledFlow(
@@ -195,20 +192,18 @@ class Scheduler:
             scheduled_for=None,  # Execute immediately
             parent_metadata=None,  # Top-level flow has no parent
             retry_policy=None,  # Retry policy is stored in flow instance, not here
-            version=self._version  # Deployment version from configuration
+            version=self._version,  # Deployment version from configuration
         )
 
         # Enqueue to storage
         try:
             task_id = await self._storage.enqueue_flow(scheduled_flow)
         except Exception as e:
-            raise SchedulerError(
-                f"Failed to enqueue flow {flow_type}: {e}"
-            ) from e
+            raise SchedulerError(f"Failed to enqueue flow {flow_type}: {e}") from e
 
         return task_id
 
-    def with_version(self, version: str) -> 'Scheduler':
+    def with_version(self, version: str) -> "Scheduler":
         """
         Set deployment version for all scheduled flows.
 
@@ -234,7 +229,7 @@ class Scheduler:
         """
         return Scheduler(self._storage, version=version)
 
-    def unversioned(self) -> 'Scheduler':
+    def unversioned(self) -> "Scheduler":
         """
         Explicitly opt out of versioning.
 
@@ -252,7 +247,7 @@ class Scheduler:
         """
         return Scheduler(self._storage, version=None)
 
-    def from_env(self) -> 'Scheduler':
+    def from_env(self) -> "Scheduler":
         """
         Configure version from DEPLOY_VERSION environment variable.
 
@@ -275,7 +270,7 @@ class Scheduler:
         version = os.getenv("DEPLOY_VERSION")
         return Scheduler(self._storage, version=version)
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """
         Get the configured deployment version.
 
@@ -307,4 +302,5 @@ class SchedulerError(Exception):
     From Dave Cheney: "Add context to errors"
     SchedulerError wraps underlying error with scheduling context.
     """
+
     pass

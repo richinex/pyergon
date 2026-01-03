@@ -38,19 +38,24 @@ From Dave Cheney:
 
 import asyncio
 import pickle
+from datetime import UTC, datetime
 from typing import Optional
-from datetime import datetime, timezone
+
 from uuid_extensions import uuid7
 
 try:
     import redis.asyncio as redis
 except ImportError:
-    raise ImportError(
-        "redis-py is required for RedisExecutionLog. "
-        "Install with: pip install redis"
-    )
+    raise ImportError("redis-py is required for RedisExecutionLog. Install with: pip install redis")
 
-from pyergon.core import Invocation, InvocationStatus, TaskStatus, ScheduledFlow
+from pyergon.core import (
+    Invocation,
+    InvocationStatus,
+    RetryPolicy,
+    ScheduledFlow,
+    TaskStatus,
+)
+from pyergon.core.timer_info import TimerInfo
 from pyergon.storage.base import ExecutionLog, StorageError
 
 
@@ -75,11 +80,7 @@ class RedisExecutionLog(ExecutionLog):
         flow = await storage.dequeue_flow("worker-1")
     """
 
-    def __init__(
-        self,
-        redis_url: str = "redis://localhost:6379",
-        max_connections: int = 16
-    ):
+    def __init__(self, redis_url: str = "redis://localhost:6379", max_connections: int = 16):
         """
         Initialize Redis execution log.
 
@@ -92,7 +93,7 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._redis_url = redis_url
         self._max_connections = max_connections
-        self._redis: Optional[redis.Redis] = None
+        self._redis: redis.Redis | None = None
 
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
         # From Rust: work_notify: Arc<Notify>, timer_notify: Arc<Notify>, status_notify: Arc<Notify>
@@ -116,7 +117,7 @@ class RedisExecutionLog(ExecutionLog):
             self._redis_url,
             encoding="utf-8",
             decode_responses=False,  # We handle binary data
-            max_connections=self._max_connections
+            max_connections=self._max_connections,
         )
 
     async def close(self) -> None:
@@ -170,8 +171,8 @@ class RedisExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: Optional[int] = None,
-        retry_policy: Optional['RetryPolicy'] = None
+        delay: int | None = None,
+        retry_policy: Optional["RetryPolicy"] = None,
     ) -> Invocation:
         """
         Log the start of a step invocation.
@@ -183,7 +184,7 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_ts = int(now.timestamp())
         inv_key = self._invocation_key(flow_id, step)
         inv_id = str(uuid7())
@@ -209,6 +210,7 @@ class RedisExecutionLog(ExecutionLog):
 
             if retry_policy is not None:
                 import pickle
+
                 await pipe.hset(inv_key, "retry_policy", pickle.dumps(retry_policy))
 
             # Add to invocations list
@@ -233,15 +235,11 @@ class RedisExecutionLog(ExecutionLog):
             is_retryable=None,
             timer_fire_at=None,
             timer_name=None,
-            updated_at=now
+            updated_at=now,
         )
 
     async def log_invocation_completion(
-        self,
-        flow_id: str,
-        step: int,
-        return_value: bytes,
-        is_retryable: Optional[bool] = None
+        self, flow_id: str, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
         """
         Log the completion of a step invocation.
@@ -258,11 +256,9 @@ class RedisExecutionLog(ExecutionLog):
         # Check existence
         exists = await self._redis.exists(inv_key)
         if not exists:
-            raise StorageError(
-                f"Invocation not found: flow_id={flow_id}, step={step}"
-            )
+            raise StorageError(f"Invocation not found: flow_id={flow_id}, step={step}")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
         # Atomic update
@@ -279,11 +275,7 @@ class RedisExecutionLog(ExecutionLog):
         # Fetch and return
         return await self._get_invocation_by_key(inv_key)
 
-    async def get_invocation(
-        self,
-        flow_id: str,
-        step: int
-    ) -> Optional[Invocation]:
+    async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
         """
         Retrieve a specific invocation.
 
@@ -300,10 +292,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return await self._get_invocation_by_key(inv_key)
 
-    async def get_latest_invocation(
-        self,
-        flow_id: str
-    ) -> Optional[Invocation]:
+    async def get_latest_invocation(self, flow_id: str) -> Invocation | None:
         """
         Get the latest invocation for a flow.
 
@@ -316,10 +305,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return max(invocations, key=lambda inv: inv.step)
 
-    async def get_invocations_for_flow(
-        self,
-        flow_id: str
-    ) -> list[Invocation]:
+    async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
         """
         Get all invocations for a flow.
 
@@ -405,7 +391,7 @@ class RedisExecutionLog(ExecutionLog):
 
         task_id = flow.task_id
         flow_key = self._flow_key(task_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check if flow should be delayed
         if flow.scheduled_for:
@@ -473,10 +459,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return task_id
 
-    async def dequeue_flow(
-        self,
-        worker_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
         """
         Claim and retrieve a pending flow from the queue.
 
@@ -498,7 +481,7 @@ class RedisExecutionLog(ExecutionLog):
         task_id = task_id_bytes.decode()
 
         flow_key = self._flow_key(task_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
         # Check if flow is ready (scheduled_for has passed)
@@ -506,7 +489,7 @@ class RedisExecutionLog(ExecutionLog):
 
         if scheduled_for_bytes:
             scheduled_for_ms = int(scheduled_for_bytes.decode())
-            scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=timezone.utc)
+            scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=UTC)
             if scheduled_for > now:
                 # Not ready yet, push back to queue
                 await self._redis.rpush("ergon:queue:pending", task_id)
@@ -529,10 +512,7 @@ class RedisExecutionLog(ExecutionLog):
         return self._parse_scheduled_flow(data)
 
     async def complete_flow(
-        self,
-        task_id: str,
-        status: TaskStatus,
-        error_message: Optional[str] = None
+        self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
         """
         Mark a flow task as complete or failed.
@@ -549,9 +529,7 @@ class RedisExecutionLog(ExecutionLog):
 
         # Guard: Validate terminal status
         if not status.is_terminal:
-            raise ValueError(
-                f"Status must be terminal (COMPLETE/FAILED), got {status}"
-            )
+            raise ValueError(f"Status must be terminal (COMPLETE/FAILED), got {status}")
 
         flow_key = self._flow_key(task_id)
 
@@ -560,7 +538,7 @@ class RedisExecutionLog(ExecutionLog):
         if not exists:
             raise StorageError(f"Flow not found: task_id={task_id}")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
         # Atomic: update status + remove from running index
@@ -576,10 +554,7 @@ class RedisExecutionLog(ExecutionLog):
 
             await pipe.execute()
 
-    async def get_scheduled_flow(
-        self,
-        task_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """
         Retrieve a scheduled flow by task ID.
 
@@ -602,11 +577,7 @@ class RedisExecutionLog(ExecutionLog):
     # ========================================================================
 
     async def log_timer(
-        self,
-        flow_id: str,
-        step: int,
-        timer_fire_at: datetime,
-        timer_name: Optional[str] = None
+        self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
         """
         Schedule a durable timer.
@@ -621,9 +592,7 @@ class RedisExecutionLog(ExecutionLog):
 
         # Atomic: update invocation + add to timers sorted set
         async with self._redis.pipeline(transaction=True) as pipe:
-            await pipe.hset(
-                inv_key, "status", InvocationStatus.WAITING_FOR_TIMER.value
-            )
+            await pipe.hset(inv_key, "status", InvocationStatus.WAITING_FOR_TIMER.value)
             await pipe.hset(inv_key, "fire_at", fire_at_millis)
             await pipe.hset(inv_key, "timer_name", timer_name or "")
 
@@ -638,10 +607,7 @@ class RedisExecutionLog(ExecutionLog):
         self._timer_notify.set()
         self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(
-        self,
-        now: datetime
-    ) -> list['TimerInfo']:
+    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
         """
         Get all timers that have expired.
 
@@ -657,12 +623,7 @@ class RedisExecutionLog(ExecutionLog):
 
         # Query sorted set for timers with score <= now_millis
         expired = await self._redis.zrangebyscore(
-            "ergon:timers:pending",
-            0,
-            now_millis,
-            withscores=True,
-            start=0,
-            num=100
+            "ergon:timers:pending", 0, now_millis, withscores=True, start=0, num=100
         )
 
         timers = []
@@ -679,25 +640,17 @@ class RedisExecutionLog(ExecutionLog):
                 inv_key = f"ergon:inv:{flow_id}:{step}"
                 inv_data = await self._redis.hgetall(inv_key)
                 timer_name = inv_data.get(b"timer_name", b"").decode() if inv_data else None
-                fire_at = datetime.fromtimestamp(score / 1000.0, tz=timezone.utc)
+                fire_at = datetime.fromtimestamp(score / 1000.0, tz=UTC)
 
-                timers.append(TimerInfo(
-                    flow_id=flow_id,
-                    step=step,
-                    fire_at=fire_at,
-                    timer_name=timer_name
-                ))
+                timers.append(
+                    TimerInfo(flow_id=flow_id, step=step, fire_at=fire_at, timer_name=timer_name)
+                )
             except (ValueError, KeyError):
                 continue
 
         return timers
 
-    async def claim_timer(
-        self,
-        flow_id: str,
-        step: int,
-        worker_id: str
-    ) -> bool:
+    async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
         """
         Atomically claim a timer.
 
@@ -741,7 +694,7 @@ class RedisExecutionLog(ExecutionLog):
             inv_key,
             "ergon:timers:pending",
             timer_member,
-            unit_value
+            unit_value,
         )
 
         # Notify timer processor if we successfully claimed a timer
@@ -752,7 +705,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return claimed == 1
 
-    async def get_next_timer_fire_time(self) -> Optional[datetime]:
+    async def get_next_timer_fire_time(self) -> datetime | None:
         """
         Get the next timer fire time from the pending timers sorted set.
 
@@ -764,15 +717,11 @@ class RedisExecutionLog(ExecutionLog):
         self._check_connected()
 
         # Get the first entry from sorted set (lowest score = earliest timer)
-        result = await self._redis.zrange(
-            "ergon:timers:pending",
-            0, 0,
-            withscores=True
-        )
+        result = await self._redis.zrange("ergon:timers:pending", 0, 0, withscores=True)
 
         if result:
             _, timestamp_ms = result[0]
-            return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+            return datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC)
 
         return None
 
@@ -780,12 +729,7 @@ class RedisExecutionLog(ExecutionLog):
     # Signal Operations
     # ========================================================================
 
-    async def log_signal(
-        self,
-        flow_id: str,
-        step: int,
-        signal_name: str
-    ) -> None:
+    async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
         """
         Log that an invocation is waiting for a signal.
 
@@ -796,25 +740,17 @@ class RedisExecutionLog(ExecutionLog):
         self._check_connected()
 
         inv_key = self._invocation_key(flow_id, step)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
         async with self._redis.pipeline(transaction=True) as pipe:
-            await pipe.hset(
-                inv_key,
-                "status",
-                InvocationStatus.WAITING_FOR_SIGNAL.value
-            )
+            await pipe.hset(inv_key, "status", InvocationStatus.WAITING_FOR_SIGNAL.value)
             await pipe.hset(inv_key, "timer_name", signal_name)
             await pipe.hset(inv_key, "updated_at", now_ts)
             await pipe.execute()
 
     async def store_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str,
-        result: bytes
+        self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
         """
         Store the result of a suspension (signal or timer completion).
@@ -836,11 +772,8 @@ class RedisExecutionLog(ExecutionLog):
         await self._redis.setex(key, 30 * 24 * 3600, result)
 
     async def get_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> Optional[bytes]:
+        self, flow_id: str, step: int, suspension_key: str
+    ) -> bytes | None:
         """
         Retrieve the result of a suspension.
 
@@ -854,12 +787,7 @@ class RedisExecutionLog(ExecutionLog):
         key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
         return await self._redis.get(key)
 
-    async def remove_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> None:
+    async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
         """
         Remove a suspension result after it's been consumed.
 
@@ -889,7 +817,7 @@ class RedisExecutionLog(ExecutionLog):
 
             if status and status.decode() == InvocationStatus.WAITING_FOR_SIGNAL.value:
                 # Parse key format: "ergon:inv:flow_id:step"
-                parts = inv_key.decode().split(':')
+                parts = inv_key.decode().split(":")
                 if len(parts) == 4:
                     flow_id = parts[2]
                     try:
@@ -897,22 +825,15 @@ class RedisExecutionLog(ExecutionLog):
                         signal_name_bytes = await self._redis.hget(inv_key, "timer_name")
                         signal_name = signal_name_bytes.decode() if signal_name_bytes else None
 
-                        signals.append({
-                            'flow_id': flow_id,
-                            'step': step,
-                            'signal_name': signal_name
-                        })
+                        signals.append(
+                            {"flow_id": flow_id, "step": step, "signal_name": signal_name}
+                        )
                     except ValueError:
                         continue
 
         return signals
 
-    async def update_is_retryable(
-        self,
-        flow_id: str,
-        step: int,
-        is_retryable: bool
-    ) -> None:
+    async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
         """
         Update the is_retryable flag for an invocation.
 
@@ -966,7 +887,7 @@ class RedisExecutionLog(ExecutionLog):
         end
         """
 
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
         resumed = await self._redis.eval(script, 1, flow_key, int(now))
 
         if resumed == 1:
@@ -982,12 +903,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return False
 
-    async def retry_flow(
-        self,
-        task_id: str,
-        error_message: str,
-        delay_seconds: int
-    ) -> None:
+    async def retry_flow(self, task_id: str, error_message: str, delay_seconds: int) -> None:
         """
         Retry a failed flow after a delay.
 
@@ -998,10 +914,10 @@ class RedisExecutionLog(ExecutionLog):
         self._check_connected()
 
         flow_key = self._flow_key(task_id)
-        scheduled_for = datetime.now(timezone.utc).timestamp() + delay_seconds
+        scheduled_for = datetime.now(UTC).timestamp() + delay_seconds
         scheduled_for_ms = int(scheduled_for * 1000)
 
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
 
         # Update flow and add to delayed queue
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -1074,10 +990,12 @@ class RedisExecutionLog(ExecutionLog):
 
             # Parse Unix timestamps
             created_at_ts = int(data[b"created_at"].decode())
-            timestamp = datetime.fromtimestamp(created_at_ts, tz=timezone.utc)
+            timestamp = datetime.fromtimestamp(created_at_ts, tz=UTC)
 
             updated_at_ts = int(data.get(b"updated_at", b"0").decode())
-            updated_at = datetime.fromtimestamp(updated_at_ts, tz=timezone.utc) if updated_at_ts else timestamp
+            updated_at = (
+                datetime.fromtimestamp(updated_at_ts, tz=UTC) if updated_at_ts else timestamp
+            )
 
             return_value = data.get(b"return_value")
 
@@ -1093,7 +1011,7 @@ class RedisExecutionLog(ExecutionLog):
             if b"fire_at" in data:
                 fire_at_ms = int(data[b"fire_at"].decode())
                 if fire_at_ms > 0:
-                    timer_fire_at = datetime.fromtimestamp(fire_at_ms / 1000, tz=timezone.utc)
+                    timer_fire_at = datetime.fromtimestamp(fire_at_ms / 1000, tz=UTC)
 
             timer_name = None
             if b"timer_name" in data:
@@ -1118,7 +1036,7 @@ class RedisExecutionLog(ExecutionLog):
                 is_retryable=is_retryable,
                 timer_fire_at=timer_fire_at,
                 timer_name=timer_name,
-                updated_at=updated_at
+                updated_at=updated_at,
             )
         except (KeyError, ValueError, UnicodeDecodeError) as e:
             raise StorageError(f"Failed to parse invocation: {e}")
@@ -1142,10 +1060,12 @@ class RedisExecutionLog(ExecutionLog):
 
             # Parse timestamps as Unix timestamps (integers)
             created_at_ts = int(data[b"created_at"].decode())
-            created_at = datetime.fromtimestamp(created_at_ts, tz=timezone.utc)
+            created_at = datetime.fromtimestamp(created_at_ts, tz=UTC)
 
             updated_at_ts = int(data.get(b"updated_at", b"0").decode())
-            updated_at = datetime.fromtimestamp(updated_at_ts, tz=timezone.utc) if updated_at_ts else created_at
+            updated_at = (
+                datetime.fromtimestamp(updated_at_ts, tz=UTC) if updated_at_ts else created_at
+            )
 
             locked_by = None
             if b"locked_by" in data:
@@ -1159,7 +1079,7 @@ class RedisExecutionLog(ExecutionLog):
             if b"scheduled_for" in data:
                 scheduled_for_ms = int(data[b"scheduled_for"].decode())
                 if scheduled_for_ms > 0:
-                    scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=timezone.utc)
+                    scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=UTC)
 
             # Parse parent metadata
             parent_metadata = None
@@ -1188,7 +1108,7 @@ class RedisExecutionLog(ExecutionLog):
                 error_message=error_message,
                 scheduled_for=scheduled_for,
                 parent_metadata=parent_metadata,
-                version=version
+                version=version,
             )
         except (KeyError, ValueError, UnicodeDecodeError) as e:
             raise StorageError(f"Failed to parse scheduled flow: {e}")

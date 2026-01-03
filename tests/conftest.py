@@ -4,17 +4,18 @@ Pytest configuration and fixtures for ergon tests.
 Provides reusable fixtures for storage backends, test flows, and utilities.
 """
 
-import pytest
 import asyncio
-import tempfile
 import shutil
+import tempfile
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from uuid import uuid4
-from typing import AsyncGenerator
+
+import pytest
 
 from pyergon.core import Invocation, InvocationStatus
-from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 from pyergon.decorators import flow, flow_type, step
+from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 
 
 @pytest.fixture(scope="session")
@@ -70,6 +71,7 @@ def random_flow_id() -> str:
 # Sample test flows for reuse across tests
 
 from dataclasses import dataclass
+
 
 @dataclass
 @flow_type
@@ -163,25 +165,38 @@ def flaky_flow() -> FlakyTestFlow:
 
 from hypothesis import strategies as st
 
+
 @st.composite
 def invocation_strategy(draw):
     """Strategy for generating valid Invocation objects."""
     inv_id = str(uuid4())
     flow_id = str(uuid4())
     step = draw(st.integers(min_value=0, max_value=1000))
-    status = draw(st.sampled_from([
-        InvocationStatus.PENDING,
-        InvocationStatus.COMPLETE,
-        InvocationStatus.WAITING_FOR_SIGNAL,
-        InvocationStatus.WAITING_FOR_TIMER,
-    ]))
+    status = draw(
+        st.sampled_from(
+            [
+                InvocationStatus.PENDING,
+                InvocationStatus.COMPLETE,
+                InvocationStatus.WAITING_FOR_SIGNAL,
+                InvocationStatus.WAITING_FOR_TIMER,
+            ]
+        )
+    )
 
     return Invocation(
         id=inv_id,
         flow_id=flow_id,
         step=step,
-        class_name=draw(st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=('Lu', 'Ll')))),
-        method_name=draw(st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=('Lu', 'Ll')))),
+        class_name=draw(
+            st.text(
+                min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+            )
+        ),
+        method_name=draw(
+            st.text(
+                min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+            )
+        ),
         parameters=draw(st.binary(min_size=0, max_size=100)),
         params_hash=draw(st.integers()),
         status=status,

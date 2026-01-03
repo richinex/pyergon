@@ -18,21 +18,22 @@ No separation of FlowInstance/FlowExecutor - simpler is better.
 """
 
 import pickle
-from typing import Callable, Awaitable, TypeVar, Generic
+from collections.abc import Awaitable, Callable
+from typing import Generic, TypeVar
 from uuid import uuid4
 
 from pyergon.core import (
-    Context,
-    EXECUTION_CONTEXT,
-    CALL_TYPE,
-    CallType,
     _CACHE_MISS,
+    CALL_TYPE,
+    EXECUTION_CONTEXT,
+    CallType,
+    Context,
 )
-from pyergon.executor.outcome import FlowOutcome, Completed, Suspended, _SuspendExecution
+from pyergon.executor.outcome import Completed, FlowOutcome, Suspended, _SuspendExecution
 from pyergon.storage.base import ExecutionLog
 
-T = TypeVar('T')  # Flow type
-R = TypeVar('R')  # Result type
+T = TypeVar("T")  # Flow type
+R = TypeVar("R")  # Result type
 
 
 class Executor(Generic[T]):
@@ -64,13 +65,7 @@ class Executor(Generic[T]):
         result = await executor.run(lambda f: f.process_order())
     """
 
-    def __init__(
-        self,
-        flow: T,
-        storage: ExecutionLog,
-        flow_id: str = None,
-        class_name: str = None
-    ):
+    def __init__(self, flow: T, storage: ExecutionLog, flow_id: str = None, class_name: str = None):
         """
         Initialize executor with flow and storage.
 
@@ -93,10 +88,7 @@ class Executor(Generic[T]):
         else:
             self.class_name = flow.__class__.__name__
 
-    async def run(
-        self,
-        entry_point: Callable[[T], Awaitable[R]]
-    ) -> FlowOutcome[R]:
+    async def run(self, entry_point: Callable[[T], Awaitable[R]]) -> FlowOutcome[R]:
         """
         Execute flow asynchronously with instant suspension detection.
 
@@ -142,11 +134,7 @@ class Executor(Generic[T]):
         """
         # Create execution context
         # From Rust: let context = Arc::new(ExecutionContext::new(self.id, self.storage.clone()))
-        ctx = Context(
-            flow_id=self.flow_id,
-            storage=self.storage,
-            class_name=self.class_name
-        )
+        ctx = Context(flow_id=self.flow_id, storage=self.storage, class_name=self.class_name)
 
         # Set task-local context
         # From Rust: EXECUTION_CONTEXT.scope(..., CALL_TYPE.scope(..., flow_future))
@@ -157,15 +145,12 @@ class Executor(Generic[T]):
             # Allocate step 0 for flow entry
             # From Rust #[flow] macro: step 0 represents the entire flow
             step_0 = ctx.next_step()  # Should be 0
-            retry_policy = getattr(self.flow, '_ergon_retry_policy', None)
+            retry_policy = getattr(self.flow, "_ergon_retry_policy", None)
 
             # Check cache BEFORE logging (critical for replay)
             # From Rust #[flow] macro lines 174-205: checks cache first
             cached = await ctx.get_cached_result(
-                step=step_0,
-                class_name=self.class_name,
-                method_name="<flow_entry>",
-                params_hash=0
+                step=step_0, class_name=self.class_name, method_name="<flow_entry>", params_hash=0
             )
 
             if cached is not _CACHE_MISS:
@@ -181,7 +166,7 @@ class Executor(Generic[T]):
                 parameters=b"",  # Flow entry has no parameters
                 params_hash=0,
                 delay=None,
-                retry_policy=retry_policy
+                retry_policy=retry_policy,
             )
 
             # Execute flow with context available
@@ -202,7 +187,7 @@ class Executor(Generic[T]):
                 await ctx.log_step_completion(
                     step=step_0,
                     return_value=result_bytes,
-                    is_retryable=None  # Success, not an error
+                    is_retryable=None,  # Success, not an error
                 )
                 return Completed(result=result)
 
@@ -215,9 +200,7 @@ class Executor(Generic[T]):
             # In Python, we use this exception as a control flow mechanism.
             suspend_reason = ctx.take_suspend_reason()
             if suspend_reason is None:
-                raise RuntimeError(
-                    "_SuspendExecution raised but no suspend_reason set in context"
-                )
+                raise RuntimeError("_SuspendExecution raised but no suspend_reason set in context")
             return Suspended(reason=suspend_reason)
 
         except Exception as e:
@@ -235,10 +218,7 @@ class Executor(Generic[T]):
             EXECUTION_CONTEXT.reset(token_ctx)
             CALL_TYPE.reset(token_call_type)
 
-    async def execute(
-        self,
-        entry_point: Callable[[T], Awaitable[R]]
-    ) -> FlowOutcome[R]:
+    async def execute(self, entry_point: Callable[[T], Awaitable[R]]) -> FlowOutcome[R]:
         """
         Alias for run() - matches Rust naming.
 
@@ -261,21 +241,16 @@ class Executor(Generic[T]):
 
     def __repr__(self) -> str:
         """Readable representation for debugging."""
-        return (
-            f"Executor(flow_id={self.flow_id!r}, "
-            f"class_name={self.class_name!r})"
-        )
+        return f"Executor(flow_id={self.flow_id!r}, class_name={self.class_name!r})"
 
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
+
 async def execute_flow(
-    flow: T,
-    storage: ExecutionLog,
-    entry_point: Callable[[T], Awaitable[R]],
-    flow_id: str = None
+    flow: T, storage: ExecutionLog, entry_point: Callable[[T], Awaitable[R]], flow_id: str = None
 ) -> FlowOutcome[R]:
     """
     Convenience function for one-off flow execution.

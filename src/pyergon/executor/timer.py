@@ -43,17 +43,14 @@ through the database, making this fully distributed.
 
 from datetime import datetime, timedelta
 
-
-
 # ========================================================================
 # Context Variables - Track current execution context
 # ========================================================================
-
 # Use Context from core module
 # From Dave Cheney: "Avoid package level state"
 # Context is managed by core/context.py using EXECUTION_CONTEXT ContextVar
-
 from pyergon.core import get_current_context as get_execution_context
+
 
 def get_current_context():
     """
@@ -89,6 +86,7 @@ def get_current_context():
 # ========================================================================
 # Public API - Timer Scheduling
 # ========================================================================
+
 
 async def schedule_timer(duration: float) -> None:
     """
@@ -171,26 +169,21 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             timer_key = name if name else ""
 
             result_bytes = await ctx.storage.get_suspension_result(
-                ctx.flow_id,
-                current_step,
-                timer_key
+                ctx.flow_id, current_step, timer_key
             )
 
             if result_bytes is not None:
                 # Timer fired! Clean up suspension result so it isn't re-delivered on retry
                 # **Rust Reference**: lines 241-245
-                await ctx.storage.remove_suspension_result(
-                    ctx.flow_id,
-                    current_step,
-                    timer_key
-                )
+                await ctx.storage.remove_suspension_result(ctx.flow_id, current_step, timer_key)
 
                 # Deserialize the SuspensionPayload to check success
                 # **Rust Reference**: lines 233-239
                 import pickle
+
                 try:
                     payload = pickle.loads(result_bytes)
-                    if payload.get('success', False):
+                    if payload.get("success", False):
                         # Timer fired successfully
                         return
                     else:
@@ -204,7 +197,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             reason = SuspendReason(
                 flow_id=ctx.flow_id,
                 step=current_step,
-                signal_name=None  # None indicates timer (not signal)
+                signal_name=None,  # None indicates timer (not signal)
             )
             ctx.set_suspend_reason(reason)
 
@@ -216,19 +209,14 @@ async def schedule_timer_named(duration: float, name: str) -> None:
     # **Rust Reference**: lines 271-278
     fire_at = datetime.now() + timedelta(seconds=duration)
 
-    await ctx.storage.log_timer(
-        ctx.flow_id,
-        current_step,
-        fire_at,
-        name if name else None
-    )
+    await ctx.storage.log_timer(ctx.flow_id, current_step, fire_at, name if name else None)
 
     # Set suspension reason and raise exception to suspend
     # **Rust Reference**: lines 280-285
     reason = SuspendReason(
         flow_id=ctx.flow_id,
         step=current_step,
-        signal_name=None  # None indicates timer
+        signal_name=None,  # None indicates timer
     )
     ctx.set_suspend_reason(reason)
 
@@ -259,6 +247,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
 # Error Types
 # ========================================================================
 
+
 class TimerError(Exception):
     """
     Timer operation failed.
@@ -266,6 +255,7 @@ class TimerError(Exception):
     From Dave Cheney: "Errors are values"
     Custom exception with context, not generic Exception.
     """
+
     pass
 
 

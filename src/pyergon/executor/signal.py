@@ -22,7 +22,8 @@ decisions about how signals are coordinated across flow executions.
 
 import asyncio
 import pickle
-from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from pyergon.core import CallType, get_current_context
 from pyergon.core.status import InvocationStatus
@@ -30,13 +31,13 @@ from pyergon.core.status import InvocationStatus
 # Global state for signal coordination
 # These are module-level to ensure visibility across all flow executions
 # Using string flow_id as key (Python uses string IDs, not UUIDs like Rust)
-_wait_notifiers: Dict[str, asyncio.Event] = {}
-_resume_params: Dict[str, bytes] = {}
+_wait_notifiers: dict[str, asyncio.Event] = {}
+_resume_params: dict[str, bytes] = {}
 
 # Lock for thread-safe access to global dictionaries
 _lock = asyncio.Lock()
 
-R = TypeVar('R')
+R = TypeVar("R")
 
 
 async def await_external_signal(signal_name: str) -> bytes:
@@ -95,19 +96,14 @@ async def await_external_signal(signal_name: str) -> bytes:
     await ctx.storage.log_signal(ctx.flow_id, current_step, signal_name)
 
     # Suspend execution
-    from pyergon.executor.outcome import _SuspendExecution, SuspendReason
-    reason = SuspendReason(
-        flow_id=ctx.flow_id,
-        step=current_step,
-        signal_name=signal_name
-    )
+    from pyergon.executor.outcome import SuspendReason, _SuspendExecution
+
+    reason = SuspendReason(flow_id=ctx.flow_id, step=current_step, signal_name=signal_name)
     ctx.set_suspend_reason(reason)
     raise _SuspendExecution()
 
 
-async def await_external_signal_callable(
-    step_callable: Callable[[], Awaitable[Optional[R]]]
-) -> R:
+async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R | None]]) -> R:
     """
     Awaits an external signal before continuing flow execution.
 
@@ -183,21 +179,18 @@ async def await_external_signal_callable(
     current_step = ctx.current_step()
 
     # Check if this step is already waiting for a signal
-    existing_inv = await ctx.storage.get_invocation(
-        flow_id=ctx.flow_id,
-        step=current_step
-    )
+    existing_inv = await ctx.storage.get_invocation(flow_id=ctx.flow_id, step=current_step)
 
     if existing_inv and existing_inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
         # We're resuming - execute the step in Resume mode
         from pyergon.core.context import CALL_TYPE
+
         token = CALL_TYPE.set(CallType.RESUME)
         try:
             result = await step_callable()
             if result is None:
                 raise RuntimeError(
-                    "BUG: Step returned None in Resume mode - "
-                    "step implementation error"
+                    "BUG: Step returned None in Resume mode - step implementation error"
                 )
             return result
         finally:
@@ -205,6 +198,7 @@ async def await_external_signal_callable(
 
     # First time calling this await - set up waiting state
     from pyergon.core.context import CALL_TYPE
+
     token = CALL_TYPE.set(CallType.AWAIT)
     try:
         # Execute the step - it should return None in Await mode
@@ -331,6 +325,6 @@ async def _signal_resume_async(flow_id: str, params_bytes: bytes) -> None:
 
 # Public exports
 __all__ = [
-    'await_external_signal',
-    'signal_resume',
+    "await_external_signal",
+    "signal_resume",
 ]

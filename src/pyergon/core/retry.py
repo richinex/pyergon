@@ -14,7 +14,6 @@ Design Rationale (from Rust version):
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -86,16 +85,16 @@ class RetryPolicy:
     # =========================================================================
 
     # No retries - fail immediately on first error
-    NONE: 'RetryPolicy' = None  # Set after class definition
+    NONE: "RetryPolicy" = None  # Set after class definition
 
     # Standard retry policy - sensible defaults for most use cases
-    STANDARD: 'RetryPolicy' = None  # Set after class definition
+    STANDARD: "RetryPolicy" = None  # Set after class definition
 
     # Aggressive retry policy for critical operations
-    AGGRESSIVE: 'RetryPolicy' = None  # Set after class definition
+    AGGRESSIVE: "RetryPolicy" = None  # Set after class definition
 
     @classmethod
-    def with_max_attempts(cls, max_attempts: int) -> 'RetryPolicy':
+    def with_max_attempts(cls, max_attempts: int) -> "RetryPolicy":
         """
         Create a policy with custom max_attempts (uses standard delays).
 
@@ -114,10 +113,10 @@ class RetryPolicy:
             max_attempts=max_attempts,
             initial_delay_ms=1000,
             max_delay_ms=30000,
-            backoff_multiplier=2.0
+            backoff_multiplier=2.0,
         )
 
-    def delay_for_attempt(self, attempt: int) -> Optional[int]:
+    def delay_for_attempt(self, attempt: int) -> int | None:
         """
         Calculate the delay before the next retry attempt.
 
@@ -144,7 +143,7 @@ class RetryPolicy:
         # attempt=2 (second retry): multiplier^1 → initial_delay * multiplier
         # attempt=3 (third retry): multiplier^2 → initial_delay * multiplier^2
         exponent = attempt - 1
-        multiplier = self.backoff_multiplier ** exponent
+        multiplier = self.backoff_multiplier**exponent
         delay_ms = self.initial_delay_ms * multiplier
 
         # Cap at max_delay
@@ -164,30 +163,28 @@ class RetryPolicy:
 
 # Initialize predefined policies after class definition
 RetryPolicy.NONE = RetryPolicy(
-    max_attempts=1,
-    initial_delay_ms=0,
-    max_delay_ms=0,
-    backoff_multiplier=1.0
+    max_attempts=1, initial_delay_ms=0, max_delay_ms=0, backoff_multiplier=1.0
 )
 
 RetryPolicy.STANDARD = RetryPolicy(
     max_attempts=3,
     initial_delay_ms=1000,  # 1 second
-    max_delay_ms=30000,     # 30 seconds
-    backoff_multiplier=2.0
+    max_delay_ms=30000,  # 30 seconds
+    backoff_multiplier=2.0,
 )
 
 RetryPolicy.AGGRESSIVE = RetryPolicy(
     max_attempts=10,
-    initial_delay_ms=100,   # 100 milliseconds
-    max_delay_ms=10000,     # 10 seconds
-    backoff_multiplier=1.5
+    initial_delay_ms=100,  # 100 milliseconds
+    max_delay_ms=10000,  # 10 seconds
+    backoff_multiplier=1.5,
 )
 
 
 # =============================================================================
 # RetryableError - Fine-grained error retry control
 # =============================================================================
+
 
 class RetryableError(Exception):
     """

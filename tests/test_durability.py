@@ -5,24 +5,23 @@ These tests verify that execution state survives process restarts and that
 the durable execution guarantees are actually enforced.
 """
 
-import pytest
 import asyncio
 import pickle
 from dataclasses import dataclass
-from uuid import uuid4
 from datetime import datetime, timedelta
-from pathlib import Path
+from uuid import uuid4
 
-from pyergon.core import Invocation, InvocationStatus, RetryPolicy
-from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
-from pyergon.decorators import flow, flow_type, step
-from pyergon.executor import Executor, Completed, Suspended
+import pytest
+
+from pyergon.core import InvocationStatus, RetryPolicy
+from pyergon.decorators import flow, flow_type
 from pyergon.executor.scheduler import Scheduler
-
+from pyergon.storage import SqliteExecutionLog
 
 # ==============================================================================
 # TEST 1: Basic Durability - Invocations Persist
 # ==============================================================================
+
 
 @pytest.mark.durability
 @pytest.mark.asyncio
@@ -82,6 +81,7 @@ async def test_invocations_persist_across_connections(temp_db_path):
 # TEST 2: Flow State Persistence
 # ==============================================================================
 
+
 # Flow for test_flow_queue_persists (must be at module level, not inside function)
 @dataclass
 @flow_type
@@ -119,7 +119,8 @@ async def test_flow_queue_persists(temp_db_path):
 
     # Dequeue - should find the flow
     from pyergon.executor.worker import Worker
-    worker = Worker(storage2, worker_id="test_worker")
+
+    Worker(storage2, worker_id="test_worker")
 
     scheduled_flow = await storage2.dequeue_flow("test_worker")
 
@@ -137,6 +138,7 @@ async def test_flow_queue_persists(temp_db_path):
 # ==============================================================================
 # TEST 3: Multi-Step Flow Resumption
 # ==============================================================================
+
 
 @pytest.mark.durability
 @pytest.mark.asyncio
@@ -193,6 +195,7 @@ async def test_multi_step_flow_resumes_correctly(temp_db_path):
 # TEST 4: Concurrent Writer Durability
 # ==============================================================================
 
+
 @pytest.mark.durability
 @pytest.mark.asyncio
 @pytest.mark.concurrency
@@ -240,8 +243,9 @@ async def test_concurrent_writes_all_persist(temp_db_path):
         flow_id = f"flow_{flow_index}"
         invocations = await storage2.get_invocations_for_flow(flow_id)
 
-        assert len(invocations) == steps_per_flow, \
+        assert len(invocations) == steps_per_flow, (
             f"Flow {flow_index} should have {steps_per_flow} invocations, got {len(invocations)}"
+        )
 
         # Verify no data corruption
         for inv in invocations:
@@ -255,6 +259,7 @@ async def test_concurrent_writes_all_persist(temp_db_path):
 # ==============================================================================
 # TEST 5: Retry State Persistence
 # ==============================================================================
+
 
 @pytest.mark.durability
 @pytest.mark.asyncio
@@ -318,6 +323,7 @@ async def test_retry_attempts_persist(temp_db_path):
 # TEST 6: Suspension State Persistence
 # ==============================================================================
 
+
 @pytest.mark.durability
 @pytest.mark.asyncio
 @pytest.mark.slow
@@ -344,7 +350,6 @@ async def test_suspended_flow_resumes_after_restart(temp_db_path):
     )
 
     # Mark as waiting for signal
-    from pyergon.executor.signal import await_external_signal
     # Store suspension state
     await storage.log_signal(flow_id, step=0, signal_name=signal_name)
 
@@ -366,6 +371,7 @@ async def test_suspended_flow_resumes_after_restart(temp_db_path):
 
     # Deliver signal after restart
     from pyergon.executor.suspension_payload import SuspensionPayload
+
     payload = SuspensionPayload(success=True, data=pickle.dumps("signal_result"))
 
     await storage2.store_suspension_result(
@@ -392,6 +398,7 @@ async def test_suspended_flow_resumes_after_restart(temp_db_path):
 # TEST 7: Database Corruption Detection
 # ==============================================================================
 
+
 @pytest.mark.durability
 @pytest.mark.asyncio
 async def test_corrupted_data_detected(temp_db_path):
@@ -416,11 +423,10 @@ async def test_corrupted_data_detected(temp_db_path):
     )
 
     # Manually corrupt the data (direct SQL manipulation)
-    import aiosqlite
     async with storage._lock:
-        cursor = await storage._connection.execute(
+        await storage._connection.execute(
             "UPDATE execution_log SET parameters = ? WHERE id = ? AND step = ?",
-            (b"CORRUPTED_NOT_PICKLE", flow_id, 0)
+            (b"CORRUPTED_NOT_PICKLE", flow_id, 0),
         )
         await storage._connection.commit()
 
@@ -441,6 +447,7 @@ async def test_corrupted_data_detected(temp_db_path):
 # ==============================================================================
 # TEST 8: Timer Persistence
 # ==============================================================================
+
 
 @pytest.mark.durability
 @pytest.mark.asyncio
@@ -500,10 +507,7 @@ async def test_timers_persist_across_restart(temp_db_path):
     expired_timers = await storage2.get_expired_timers(datetime.now() + timedelta(seconds=120))
 
     # Should find our timer (it expires in 60s, we checked at 120s)
-    timer_found = any(
-        t.flow_id == flow_id and t.step == 0
-        for t in expired_timers
-    )
+    timer_found = any(t.flow_id == flow_id and t.step == 0 for t in expired_timers)
     assert timer_found, "Timer should be in expired list"
 
     await storage2.close()

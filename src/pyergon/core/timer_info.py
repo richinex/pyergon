@@ -12,7 +12,6 @@ returned from storage.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 __all__ = ["TimerInfo"]
 
@@ -49,7 +48,7 @@ class TimerInfo:
     fire_at: datetime
     """When the timer is scheduled to fire"""
 
-    timer_name: Optional[str] = None
+    timer_name: str | None = None
     """Optional timer name for debugging"""
 
     def __repr__(self) -> str:

@@ -63,16 +63,17 @@ See `examples/dag_blocking_ops.py` for detailed examples.
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
 from collections import deque
+from typing import Any
 
 
 class DagExecutionError(Exception):
     """Error during DAG execution."""
+
     pass
 
 
-async def dag(flow: Any, final_step: Optional[str] = None) -> Any:
+async def dag(flow: Any, final_step: str | None = None) -> Any:
     """
     Execute a flow's steps as a DAG based on dependency metadata.
 
@@ -128,7 +129,7 @@ async def dag(flow: Any, final_step: Optional[str] = None) -> Any:
     levels = _group_by_level(graph)
 
     # Step 4: Execute steps level by level, with parallel execution within each level
-    results: Dict[str, Any] = {}
+    results: dict[str, Any] = {}
 
     for level_steps in levels:
         # Create tasks for all steps at this level
@@ -139,7 +140,7 @@ async def dag(flow: Any, final_step: Optional[str] = None) -> Any:
             step_method = getattr(flow, step_name)
 
             # Get input wiring metadata
-            step_inputs = getattr(step_method, '_step_inputs', {})
+            step_inputs = getattr(step_method, "_step_inputs", {})
 
             # Build kwargs from wired inputs
             kwargs = {}
@@ -180,7 +181,7 @@ async def dag(flow: Any, final_step: Optional[str] = None) -> Any:
         return None
 
 
-def _discover_steps(flow: Any) -> List[str]:
+def _discover_steps(flow: Any) -> list[str]:
     """
     Discover all @step decorated methods in a flow.
 
@@ -194,19 +195,19 @@ def _discover_steps(flow: Any) -> List[str]:
 
     for name in dir(flow):
         # Skip private methods
-        if name.startswith('_'):
+        if name.startswith("_"):
             continue
 
         attr = getattr(flow, name)
 
         # Check if it's an ergon step
-        if callable(attr) and hasattr(attr, '_is_ergon_step'):
+        if callable(attr) and hasattr(attr, "_is_ergon_step"):
             steps.append(name)
 
     return steps
 
 
-def _build_dependency_graph(flow: Any, steps: List[str]) -> Dict[str, List[str]]:
+def _build_dependency_graph(flow: Any, steps: list[str]) -> dict[str, list[str]]:
     """
     Build dependency graph from @step metadata.
 
@@ -224,17 +225,14 @@ def _build_dependency_graph(flow: Any, steps: List[str]) -> Dict[str, List[str]]
             'step_c': ['step_a', 'step_b']
         }
     """
-    graph: Dict[str, List[str]] = {}
+    graph: dict[str, list[str]] = {}
 
     for step_name in steps:
         step_method = getattr(flow, step_name)
-        depends_on = getattr(step_method, '_step_depends_on', [])
+        depends_on = getattr(step_method, "_step_depends_on", [])
 
         # Filter out special markers like __NO_AUTO_CHAIN__
-        dependencies = [
-            dep for dep in depends_on
-            if not dep.startswith('__')
-        ]
+        dependencies = [dep for dep in depends_on if not dep.startswith("__")]
 
         graph[step_name] = dependencies
 
@@ -250,7 +248,7 @@ def _build_dependency_graph(flow: Any, steps: List[str]) -> Dict[str, List[str]]
     return graph
 
 
-def _topological_sort(graph: Dict[str, List[str]]) -> List[str]:
+def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
     """
     Topological sort of dependency graph using Kahn's algorithm.
 
@@ -270,7 +268,7 @@ def _topological_sort(graph: Dict[str, List[str]]) -> List[str]:
     4. If graph still has edges, there's a cycle
     """
     # Build in-degree map (how many steps depend on each step)
-    in_degree: Dict[str, int] = {step: 0 for step in graph}
+    in_degree: dict[str, int] = {step: 0 for step in graph}
 
     for step, deps in graph.items():
         for dep in deps:
@@ -298,14 +296,12 @@ def _topological_sort(graph: Dict[str, List[str]]) -> List[str]:
     # Check for cycles
     if len(result) != len(graph):
         remaining = [step for step in graph if step not in result]
-        raise DagExecutionError(
-            f"Dependency graph has cycles. Remaining steps: {remaining}"
-        )
+        raise DagExecutionError(f"Dependency graph has cycles. Remaining steps: {remaining}")
 
     return result
 
 
-def _group_by_level(graph: Dict[str, List[str]]) -> List[List[str]]:
+def _group_by_level(graph: dict[str, list[str]]) -> list[list[str]]:
     """
     Group steps by dependency level for parallel execution.
 
@@ -334,7 +330,7 @@ def _group_by_level(graph: Dict[str, List[str]]) -> List[List[str]]:
         - Level 2: e (depends on c, d)
     """
     # Calculate the level (max dependency depth) for each step
-    levels_map: Dict[str, int] = {}
+    levels_map: dict[str, int] = {}
 
     def calculate_level(step: str) -> int:
         """Calculate the level of a step (max depth from root)."""
@@ -358,7 +354,7 @@ def _group_by_level(graph: Dict[str, List[str]]) -> List[List[str]]:
 
     # Group steps by level
     max_level = max(levels_map.values()) if levels_map else 0
-    levels: List[List[str]] = [[] for _ in range(max_level + 1)]
+    levels: list[list[str]] = [[] for _ in range(max_level + 1)]
 
     for step, level in levels_map.items():
         levels[level].append(step)
@@ -367,4 +363,4 @@ def _group_by_level(graph: Dict[str, List[str]]) -> List[List[str]]:
 
 
 # Export public API
-__all__ = ['dag', 'DagExecutionError']
+__all__ = ["dag", "DagExecutionError"]

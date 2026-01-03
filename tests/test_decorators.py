@@ -4,10 +4,12 @@ Tests for Phase 3 decorator system.
 Tests @flow, @flow_type, and @step decorators and Executor execution.
 """
 
-import pytest
-import pyergon
 import asyncio
 from dataclasses import dataclass
+
+import pytest
+
+import pyergon
 
 
 @dataclass
@@ -40,17 +42,19 @@ class SimpleWorkflow:
 
 def test_step_decorator():
     """Test that @step decorator adds metadata."""
+
     @pyergon.step
     async def test_step():
         pass
 
-    assert hasattr(test_step, '_is_ergon_step')
+    assert hasattr(test_step, "_is_ergon_step")
     assert test_step._is_ergon_step is True
-    assert test_step._step_name == 'test_step'
+    assert test_step._step_name == "test_step"
 
 
 def test_flow_type_decorator():
     """Test that @flow_type decorator adds metadata."""
+
     @dataclass
     @pyergon.flow_type
     class TestFlow:
@@ -66,12 +70,12 @@ def test_flow_type_decorator():
         async def run(self):
             pass
 
-    assert hasattr(TestFlow, '_is_ergon_flow')
+    assert hasattr(TestFlow, "_is_ergon_flow")
     assert TestFlow._is_ergon_flow is True
-    assert hasattr(TestFlow, '_ergon_steps')
-    assert 'step_a' in TestFlow._ergon_steps
-    assert 'step_b' in TestFlow._ergon_steps
-    assert 'run' not in TestFlow._ergon_steps  # run is not a step
+    assert hasattr(TestFlow, "_ergon_steps")
+    assert "step_a" in TestFlow._ergon_steps
+    assert "step_b" in TestFlow._ergon_steps
+    assert "run" not in TestFlow._ergon_steps  # run is not a step
 
 
 @pytest.mark.asyncio

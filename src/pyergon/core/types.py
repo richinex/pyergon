@@ -9,7 +9,6 @@ RUST COMPLIANCE: Matches Rust ergon src/storage/queue.rs types
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 from pyergon.core.status import TaskStatus
 
@@ -59,7 +58,7 @@ class ScheduledFlow:
     Rust: status: TaskStatus
     """
 
-    locked_by: Optional[str] = None
+    locked_by: str | None = None
     """Worker ID that claimed this task (for work distribution tracking).
 
     Rust: locked_by: Option<String>
@@ -85,34 +84,34 @@ class ScheduledFlow:
     Python: ADDED to match Rust
     """
 
-    error_message: Optional[str] = None
+    error_message: str | None = None
     """Error message from last execution (if failed).
 
     Rust: error_message: Option<String>
     Python: ADDED to match Rust
     """
 
-    scheduled_for: Optional[datetime] = None
+    scheduled_for: datetime | None = None
     """When this task should be executed (for delayed retry).
 
     Rust: scheduled_for: Option<DateTime<Utc>>
     If None, execute immediately.
     """
 
-    parent_metadata: Optional[tuple[str, str]] = None
+    parent_metadata: tuple[str, str] | None = None
     """Parent flow metadata for child invocation.
 
     Tuple of (parent_flow_id, signal_token) if this is a child flow.
     Maps to Rust fields: parent_flow_id and signal_token.
     """
 
-    retry_policy: Optional[dict] = None
+    retry_policy: dict | None = None
     """Retry policy for this flow.
 
     Contains retry configuration (max_retries, backoff, etc.)
     """
 
-    version: Optional[str] = None
+    version: str | None = None
     """Semantic version of the flow (e.g., "1.0.0", "v2").
 
     **Rust Reference**: `src/storage/queue.rs` line 97
@@ -124,10 +123,10 @@ class ScheduledFlow:
     """
 
     # Python extensions (not in Rust, but useful)
-    claimed_at: Optional[datetime] = None
+    claimed_at: datetime | None = None
     """When this task was claimed by a worker (Python extension)"""
 
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
     """When this task completed (Python extension)"""
 
     def __repr__(self) -> str:

@@ -24,10 +24,11 @@ what operations clients need without specifying implementation details.
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
-from typing import List, Optional, Protocol, runtime_checkable
+from datetime import datetime, timedelta
+from typing import Optional, Protocol, runtime_checkable
 
-from pyergon.core import Invocation, ScheduledFlow, TaskStatus
+from pyergon.core import Invocation, RetryPolicy, ScheduledFlow, TaskStatus
+from pyergon.core.timer_info import TimerInfo
 
 
 @dataclass
@@ -42,9 +43,10 @@ class SignalInfo:
         step: Step number waiting for signal
         signal_name: Optional signal name (stored in timer_name field)
     """
+
     flow_id: str
     step: int
-    signal_name: Optional[str] = None
+    signal_name: str | None = None
 
 
 class StorageError(Exception):
@@ -54,6 +56,7 @@ class StorageError(Exception):
     From Dave Cheney: "Errors are values"
     Custom exception with context, not generic Exception.
     """
+
     pass
 
 
@@ -87,8 +90,8 @@ class ExecutionLog(ABC):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: Optional[int] = None,
-        retry_policy: Optional['RetryPolicy'] = None
+        delay: int | None = None,
+        retry_policy: Optional["RetryPolicy"] = None,
     ) -> Invocation:
         """
         Record the start of a step execution.
@@ -120,11 +123,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def log_invocation_completion(
-        self,
-        flow_id: str,
-        step: int,
-        return_value: bytes,
-        is_retryable: Optional[bool] = None
+        self, flow_id: str, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
         """
         Record the completion of a step execution.
@@ -151,11 +150,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_invocation(
-        self,
-        flow_id: str,
-        step: int
-    ) -> Optional[Invocation]:
+    async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
         """
         Retrieve a specific step invocation.
 
@@ -246,10 +241,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def dequeue_flow(
-        self,
-        worker_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
         """
         Claim and retrieve a pending flow from the queue.
 
@@ -270,10 +262,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def complete_flow(
-        self,
-        task_id: str,
-        status: TaskStatus,
-        error_message: Optional[str] = None
+        self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
         """
         Mark a flow task as complete or failed.
@@ -298,12 +287,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def retry_flow(
-        self,
-        task_id: str,
-        error_message: str,
-        delay: 'timedelta'
-    ) -> None:
+    async def retry_flow(self, task_id: str, error_message: str, delay: "timedelta") -> None:
         """
         Reschedule a failed flow for retry after a delay.
 
@@ -328,10 +312,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_scheduled_flow(
-        self,
-        task_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """
         Retrieve a scheduled flow by task ID.
 
@@ -352,11 +333,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def log_timer(
-        self,
-        flow_id: str,
-        step: int,
-        timer_fire_at: datetime,
-        timer_name: Optional[str] = None
+        self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
         """
         Schedule a durable timer.
@@ -377,10 +354,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_expired_timers(
-        self,
-        now: datetime
-    ) -> list['TimerInfo']:
+    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
         """
         Get all timers that have expired.
 
@@ -398,12 +372,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def claim_timer(
-        self,
-        flow_id: str,
-        step: int,
-        worker_id: str
-    ) -> bool:
+    async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
         """
         Claim an expired timer (optimistic concurrency).
 
@@ -430,11 +399,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def store_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str,
-        result: bytes
+        self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
         """
         Store suspension result data (timer or signal completion).
@@ -458,11 +423,8 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> Optional[bytes]:
+        self, flow_id: str, step: int, suspension_key: str
+    ) -> bytes | None:
         """
         Get suspension result data if available.
 
@@ -481,12 +443,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def remove_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> None:
+    async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
         """
         Remove suspension result data after consuming it.
 
@@ -505,12 +462,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def log_signal(
-        self,
-        flow_id: str,
-        step: int,
-        signal_name: str
-    ) -> None:
+    async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
         """
         Mark an invocation as waiting for an external signal.
 
@@ -532,7 +484,7 @@ class ExecutionLog(ABC):
         """
         pass
 
-    async def get_waiting_signals(self) -> List[SignalInfo]:
+    async def get_waiting_signals(self) -> list[SignalInfo]:
         """
         Get all flows waiting for external signals.
 
@@ -554,12 +506,7 @@ class ExecutionLog(ABC):
         return []
 
     @abstractmethod
-    async def update_is_retryable(
-        self,
-        flow_id: str,
-        step: int,
-        is_retryable: bool
-    ) -> None:
+    async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
         """
         Update the is_retryable flag for a specific step invocation.
 
@@ -607,7 +554,6 @@ class ExecutionLog(ABC):
         """
         pass
 
-
     # ========================================================================
     # Flow Resume Operations
     # ========================================================================
@@ -646,7 +592,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_invocations_for_flow(self, flow_id: str) -> list['Invocation']:
+    async def get_invocations_for_flow(self, flow_id: str) -> list["Invocation"]:
         """
         Get all invocations (steps) for a specific flow.
 
@@ -673,7 +619,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_next_timer_fire_time(self) -> Optional[datetime]:
+    async def get_next_timer_fire_time(self) -> datetime | None:
         """
         Get the earliest timer fire time across all flows.
 
@@ -737,6 +683,7 @@ class ExecutionLog(ABC):
 # =============================================================================
 # Notification Source Protocols - Event-Driven Storage
 # =============================================================================
+
 
 @runtime_checkable
 class WorkNotificationSource(Protocol):

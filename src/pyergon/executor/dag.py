@@ -48,17 +48,16 @@ class OrderProcessor:
 
 import asyncio
 import pickle
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import (
-    Any, Awaitable, Callable, Dict, Generic, List, Set, TypeVar
-)
+from typing import Any, Generic, TypeVar
 
 # Type variables
-T = TypeVar('T')
-R = TypeVar('R')
+T = TypeVar("T")
+R = TypeVar("R")
 
 # Type aliases for complex types
-StepInputs = Dict[str, bytes]  # step_id -> serialized value
+StepInputs = dict[str, bytes]  # step_id -> serialized value
 StepOutput = bytes
 StepFactory = Callable[[StepInputs], Awaitable[StepOutput]]
 
@@ -83,12 +82,7 @@ class StepHandle(Generic[T]):
     - Uses asyncio.Future instead of tokio::oneshot
     """
 
-    def __init__(
-        self,
-        step_id: str,
-        dependencies: List[str],
-        future: 'asyncio.Future[T]'
-    ):
+    def __init__(self, step_id: str, dependencies: list[str], future: "asyncio.Future[T]"):
         self.step_id = step_id
         self.dependencies = dependencies
         self._future = future
@@ -134,10 +128,11 @@ class DeferredStep:
         factory: Factory function (takes serialized inputs, returns serialized output)
         result_future: asyncio.Future to set the result
     """
+
     step_id: str
-    dependencies: List[str]
+    dependencies: list[str]
     factory: StepFactory
-    result_future: 'asyncio.Future[Any]'
+    result_future: "asyncio.Future[Any]"
 
 
 class DeferredRegistry:
@@ -174,13 +169,10 @@ class DeferredRegistry:
     """
 
     def __init__(self):
-        self.steps: List[DeferredStep] = []
+        self.steps: list[DeferredStep] = []
 
     def register(
-        self,
-        step_name: str,
-        dependencies: List[str],
-        factory: Callable[[StepInputs], Awaitable[T]]
+        self, step_name: str, dependencies: list[str], factory: Callable[[StepInputs], Awaitable[T]]
     ) -> StepHandle[T]:
         """
         Registers a deferred step with explicit dependencies.
@@ -230,12 +222,14 @@ class DeferredRegistry:
             return pickle.dumps(result)
 
         # Store deferred step
-        self.steps.append(DeferredStep(
-            step_id=step_id,
-            dependencies=deps,
-            factory=factory_wrapped,
-            result_future=result_future
-        ))
+        self.steps.append(
+            DeferredStep(
+                step_id=step_id,
+                dependencies=deps,
+                factory=factory_wrapped,
+                result_future=result_future,
+            )
+        )
 
         # Return handle
         return StepHandle(step_id, deps, result_future)
@@ -267,19 +261,17 @@ class DeferredRegistry:
             ValueError: If cycles or invalid dependencies found
         """
         # Build step ID set
-        step_ids: Set[str] = {s.step_id for s in self.steps}
+        step_ids: set[str] = {s.step_id for s in self.steps}
 
         # Check for invalid dependencies
         for step in self.steps:
             for dep in step.dependencies:
                 if dep not in step_ids:
-                    raise ValueError(
-                        f"Step '{step.step_id}' depends on non-existent step '{dep}'"
-                    )
+                    raise ValueError(f"Step '{step.step_id}' depends on non-existent step '{dep}'")
 
         # Check for cycles using DFS
-        visited: Set[str] = set()
-        rec_stack: Set[str] = set()
+        visited: set[str] = set()
+        rec_stack: set[str] = set()
 
         def has_cycle(step_id: str) -> bool:
             visited.add(step_id)
@@ -319,7 +311,7 @@ class DeferredRegistry:
         """
         await execute_dag(self.steps)
 
-    def summary(self) -> 'DagSummary':
+    def summary(self) -> "DagSummary":
         """
         Returns a summary of the DAG structure.
 
@@ -338,7 +330,7 @@ class DeferredRegistry:
         roots = [s.step_id for s in self.steps if not s.dependencies]
 
         # Find leaves (steps that no one depends on)
-        all_deps: Set[str] = set()
+        all_deps: set[str] = set()
         for step in self.steps:
             all_deps.update(step.dependencies)
 
@@ -353,7 +345,7 @@ class DeferredRegistry:
             leaf_count=len(leaves),
             max_depth=max_depth,
             roots=roots,
-            leaves=leaves
+            leaves=leaves,
         )
 
     def level_graph(self) -> str:
@@ -384,7 +376,7 @@ class DeferredRegistry:
 
         # Group steps by level
         max_level = max(depths.values()) if depths else 0
-        levels: List[List[str]] = [[] for _ in range(max_level + 1)]
+        levels: list[list[str]] = [[] for _ in range(max_level + 1)]
 
         for step in self.steps:
             depth = depths.get(step.step_id, 0)
@@ -405,14 +397,14 @@ class DeferredRegistry:
         output += "\nSteps at the same level run in parallel!\n"
         return output
 
-    def _calculate_depths(self) -> Dict[str, int]:
+    def _calculate_depths(self) -> dict[str, int]:
         """
         Calculates the depth of each step in the DAG.
 
         Returns a dict mapping each step_id to its depth (distance from root).
         Root nodes have depth 0, their children have depth 1, etc.
         """
-        depths: Dict[str, int] = {}
+        depths: dict[str, int] = {}
 
         # Find roots
         roots = [s for s in self.steps if not s.dependencies]
@@ -459,15 +451,16 @@ class DagSummary:
         roots: List of root step IDs
         leaves: List of leaf step IDs
     """
+
     total_steps: int
     root_count: int
     leaf_count: int
     max_depth: int
-    roots: List[str]
-    leaves: List[str]
+    roots: list[str]
+    leaves: list[str]
 
 
-async def execute_dag(steps: List[DeferredStep]) -> None:
+async def execute_dag(steps: list[DeferredStep]) -> None:
     """
     Executes deferred steps in parallel based on dependencies.
 
@@ -497,27 +490,25 @@ async def execute_dag(steps: List[DeferredStep]) -> None:
     - Preserves task-local context (no asyncio.create_task)
     """
     total = len(steps)
-    completed: Set[str] = set()
-    results: Dict[str, bytes] = {}
+    completed: set[str] = set()
+    results: dict[str, bytes] = {}
 
     # Build step lookup
-    step_map: Dict[str, DeferredStep] = {s.step_id: s for s in steps}
+    step_map: dict[str, DeferredStep] = {s.step_id: s for s in steps}
 
     # Validate: check for invalid dependencies
     step_ids = set(step_map.keys())
     for step in steps:
         for dep in step.dependencies:
             if dep not in step_ids:
-                raise ValueError(
-                    f"Step '{step.step_id}' depends on non-existent step '{dep}'"
-                )
+                raise ValueError(f"Step '{step.step_id}' depends on non-existent step '{dep}'")
 
     while len(completed) < total:
         # Find ready steps (all dependencies completed)
         ready = [
-            step_id for step_id, step in step_map.items()
-            if step_id not in completed
-            and all(dep in completed for dep in step.dependencies)
+            step_id
+            for step_id, step in step_map.items()
+            if step_id not in completed and all(dep in completed for dep in step.dependencies)
         ]
 
         if not ready and len(completed) < total:
@@ -532,10 +523,7 @@ async def execute_dag(steps: List[DeferredStep]) -> None:
             step = step_map[step_id]
 
             # Gather inputs from completed dependencies
-            inputs: StepInputs = {
-                dep: results[dep]
-                for dep in step.dependencies
-            }
+            inputs: StepInputs = {dep: results[dep] for dep in step.dependencies}
 
             # Execute factory
             try:
@@ -548,9 +536,7 @@ async def execute_dag(steps: List[DeferredStep]) -> None:
 
         # Run all ready steps in parallel
         try:
-            step_results = await asyncio.gather(*[
-                execute_step(step_id) for step_id in ready
-            ])
+            step_results = await asyncio.gather(*[execute_step(step_id) for step_id in ready])
         except Exception as e:
             # One step failed - abort
             raise RuntimeError(f"DAG execution failed: {e}") from e
@@ -576,8 +562,8 @@ async def execute_dag(steps: List[DeferredStep]) -> None:
 
 # Public exports
 __all__ = [
-    'StepHandle',
-    'DeferredRegistry',
-    'DagSummary',
-    'execute_dag',
+    "StepHandle",
+    "DeferredRegistry",
+    "DagSummary",
+    "execute_dag",
 ]

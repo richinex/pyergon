@@ -18,38 +18,39 @@ similar to how Rust macros expand.
 """
 
 import asyncio
-import pickle
 import functools
-import hashlib
+import pickle
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
+
 import xxhash
-from typing import Any, Callable, Optional, TypeVar, Union, TYPE_CHECKING
 
 from pyergon.core import (
-    get_current_context,
-    RetryPolicy,
-    RetryableError,
     _CACHE_MISS,
+    RetryableError,
+    RetryPolicy,
+    get_current_context,
 )
 
 if TYPE_CHECKING:
     from pyergon.core.invokable_flow import InvokableFlow
     from pyergon.executor.pending_child import PendingChild
 
-T = TypeVar('T')
-F = TypeVar('F', bound=Callable[..., Any])
+T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., Any])
 
 # Sentinel value to detect when depends_on was not provided
 _UNSET = object()
 
 
 def step(
-    func: Optional[F] = None,
+    func: F | None = None,
     *,
-    depends_on: Optional[Union[str, list[str]]] = _UNSET,  # type: ignore
-    inputs: Optional[dict[str, str]] = None,
+    depends_on: str | list[str] | None = _UNSET,  # type: ignore
+    inputs: dict[str, str] | None = None,
     cache_errors: bool = False,
-    delay: Optional[int] = None,
-    retry_policy: Optional[RetryPolicy] = None
+    delay: int | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> F:
     """
     Mark a method as a durable workflow step with FULL instrumentation.
@@ -94,6 +95,7 @@ def step(
         The macro generates ~50 lines of instrumentation code
         around the user's function. This decorator does the same.
     """
+
     def decorator(f: F) -> F:
         # Add metadata (like before)
         f._is_ergon_step = True  # type: ignore
@@ -104,9 +106,7 @@ def step(
 
         # Build dependencies
         has_explicit_empty_depends_on = (
-            depends_on is not _UNSET and
-            isinstance(depends_on, list) and
-            len(depends_on) == 0
+            depends_on is not _UNSET and isinstance(depends_on, list) and len(depends_on) == 0
         )
 
         base_deps: list[str] = []
@@ -165,10 +165,7 @@ def step(
 
             # Serialize parameters (skip 'self')
             # From Rust: let params = serialize_value(&params)?
-            params_dict = {
-                'args': args[1:] if len(args) > 1 else [],
-                'kwargs': kwargs
-            }
+            params_dict = {"args": args[1:] if len(args) > 1 else [], "kwargs": kwargs}
             try:
                 parameters = pickle.dumps(params_dict)
             except Exception:
@@ -182,12 +179,12 @@ def step(
             # (parameter changes are detected via params_hash check)
             # OPTIMIZATION: Cache step IDs (they never change for a given method)
             hash_key = f"{class_name}.{method_name}"
-            if not hasattr(async_wrapper, '_step_id_cache'):
+            if not hasattr(async_wrapper, "_step_id_cache"):
                 async_wrapper._step_id_cache = {}  # type: ignore
 
             if hash_key not in async_wrapper._step_id_cache:  # type: ignore
                 # OPTIMIZATION: Using xxhash (4-6x faster than SHA256)
-                step_num = xxhash.xxh64(hash_key.encode('utf-8')).intdigest() & 0x7FFFFFFF
+                step_num = xxhash.xxh64(hash_key.encode("utf-8")).intdigest() & 0x7FFFFFFF
                 async_wrapper._step_id_cache[hash_key] = step_num  # type: ignore
             else:
                 step_num = async_wrapper._step_id_cache[hash_key]  # type: ignore
@@ -206,7 +203,7 @@ def step(
                 step=step_num,
                 class_name=class_name,
                 method_name=method_name,
-                params_hash=params_hash
+                params_hash=params_hash,
             )
 
             if cached is not _CACHE_MISS:
@@ -226,7 +223,7 @@ def step(
                 parameters=parameters,
                 params_hash=params_hash,
                 delay=delay,
-                retry_policy=retry_policy
+                retry_policy=retry_policy,
             )
 
             # Execute with retry loop
@@ -244,7 +241,7 @@ def step(
                     await ctx.log_step_completion(
                         step=step_num,
                         return_value=result_bytes,
-                        is_retryable=None  # None = not an error
+                        is_retryable=None,  # None = not an error
                     )
 
                     # Restore enclosing step before returning (Rust step.rs:792-793)
@@ -265,9 +262,7 @@ def step(
 
                     # Should we retry?
                     should_retry = (
-                        is_retryable and
-                        attempts < max_attempts and
-                        retry_policy is not None
+                        is_retryable and attempts < max_attempts and retry_policy is not None
                     )
 
                     if should_retry:
@@ -292,7 +287,7 @@ def step(
                             await ctx.log_step_completion(
                                 step=step_num,
                                 return_value=error_bytes,
-                                is_retryable=None  # Already stored via update_step_retryability
+                                is_retryable=None,  # Already stored via update_step_retryability
                             )
                         # Always raise (retryable errors will trigger flow-level retry)
                         raise
@@ -310,9 +305,9 @@ def step(
 def flow_type(
     cls: type[T] = None,
     *,
-    type_id: Optional[str] = None,
-    retry_policy: Optional[RetryPolicy] = None,
-    invokable: Optional[type] = None
+    type_id: str | None = None,
+    retry_policy: RetryPolicy | None = None,
+    invokable: type | None = None,
 ) -> type[T]:
     """
     Mark a class as a FlowType with optional InvokableFlow support.
@@ -371,6 +366,7 @@ def flow_type(
         struct PaymentFlow { ... }
         ```
     """
+
     def decorator(c: type[T]) -> type[T]:
         # Add metadata
         c._is_ergon_flow = True  # type: ignore
@@ -397,7 +393,7 @@ def flow_type(
 
         # Add invoke() method for child flow invocation
         # From Rust: InvokeChild trait extension on Arc<T> where T: FlowType
-        def invoke(self, child: 'InvokableFlow') -> 'PendingChild':
+        def invoke(self, child: "InvokableFlow") -> "PendingChild":
             """
             Invoke a child flow and get a handle to await its result.
 
@@ -462,7 +458,7 @@ def flow_type(
                 raise RuntimeError(f"Failed to serialize child flow: {e}") from e
 
             # Get child type ID (must have type_id() method from FlowType)
-            if not hasattr(child, 'type_id') or not callable(child.type_id):
+            if not hasattr(child, "type_id") or not callable(child.type_id):
                 raise TypeError(
                     f"Child flow {child.__class__.__name__} must implement FlowType "
                     "(use @flow decorator or implement type_id() method)"
@@ -478,7 +474,7 @@ def flow_type(
         steps = []
         for name in c.__dict__:
             attr = getattr(c, name)
-            if callable(attr) and hasattr(attr, '_is_ergon_step'):
+            if callable(attr) and hasattr(attr, "_is_ergon_step"):
                 steps.append(name)
 
         c._ergon_steps = steps  # type: ignore
@@ -492,11 +488,7 @@ def flow_type(
         return decorator
 
 
-def flow(
-    func: Optional[F] = None,
-    *,
-    retry_policy: Optional[RetryPolicy] = None
-) -> F:
+def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F:
     """
     Mark an async method as a flow entry point.
 
@@ -551,6 +543,7 @@ def flow(
         }
         ```
     """
+
     def decorator(f: F) -> F:
         # Mark as flow entry point
         f._is_ergon_flow_method = True  # type: ignore
@@ -584,10 +577,7 @@ def flow(
             method_name = f.__name__
 
             # Serialize parameters (skip 'self')
-            params_dict = {
-                'args': args[1:] if len(args) > 1 else [],
-                'kwargs': kwargs
-            }
+            params_dict = {"args": args[1:] if len(args) > 1 else [], "kwargs": kwargs}
             try:
                 parameters = pickle.dumps(params_dict)
             except Exception:
@@ -606,7 +596,7 @@ def flow(
                 step=step_num,
                 class_name=class_name,
                 method_name=method_name,
-                params_hash=params_hash
+                params_hash=params_hash,
             )
 
             if cached is not _CACHE_MISS:
@@ -622,7 +612,7 @@ def flow(
                 parameters=parameters,
                 params_hash=params_hash,
                 delay=None,
-                retry_policy=retry_policy
+                retry_policy=retry_policy,
             )
 
             # Set enclosing step (line 235 in flow.rs)
@@ -640,9 +630,7 @@ def flow(
                     # Normal completion - log it
                     result_bytes = pickle.dumps(result)
                     await ctx.log_step_completion(
-                        step=step_num,
-                        return_value=result_bytes,
-                        is_retryable=None
+                        step=step_num, return_value=result_bytes, is_retryable=None
                     )
 
                 # Restore enclosing step

@@ -8,25 +8,22 @@ These tests verify that the system handles concurrent operations correctly:
 - Event notification coordination
 """
 
-import pytest
 import asyncio
 import pickle
 from dataclasses import dataclass
 from uuid import uuid4
-from typing import List, Set
-from datetime import datetime
+
+import pytest
 
 from pyergon.core import InvocationStatus, TaskStatus
-from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 from pyergon.decorators import flow, flow_type, step
-from pyergon.executor import Executor, Completed
+from pyergon.executor import Completed, Executor
 from pyergon.executor.scheduler import Scheduler
-from pyergon.executor.worker import Worker
-
 
 # ==============================================================================
 # TEST 1: Concurrent Flow Execution (No Interference)
 # ==============================================================================
+
 
 # Flow classes must be at module level to avoid scope issues
 @dataclass
@@ -67,23 +64,20 @@ async def test_concurrent_flows_dont_interfere(in_memory_storage):
         return outcome.result
 
     # Execute flows concurrently
-    results = await asyncio.gather(*[
-        execute_flow(i, i * 10)
-        for i in range(num_flows)
-    ])
+    results = await asyncio.gather(*[execute_flow(i, i * 10) for i in range(num_flows)])
 
     # Verify all flows computed correctly (no interference)
     for i in range(num_flows):
         expected = i * 10 * 2
         # Handle case where result might be an exception
         if not isinstance(results[i], Exception):
-            assert results[i] == expected, \
-                f"Flow {i} expected {expected}, got {results[i]}"
+            assert results[i] == expected, f"Flow {i} expected {expected}, got {results[i]}"
 
 
 # ==============================================================================
 # TEST 2: Concurrent Storage Writes
 # ==============================================================================
+
 
 @pytest.mark.concurrency
 @pytest.mark.asyncio
@@ -129,22 +123,24 @@ async def test_concurrent_storage_writes_no_corruption(in_memory_storage):
         invocations = await in_memory_storage.get_invocations_for_flow(flow_id)
 
         # All writes should have persisted
-        assert len(invocations) == writes_per_writer, \
+        assert len(invocations) == writes_per_writer, (
             f"Writer {writer_id} expected {writes_per_writer} invocations, got {len(invocations)}"
+        )
 
         # No duplicate steps
         steps = [inv.step for inv in invocations]
-        assert len(steps) == len(set(steps)), \
-            f"Writer {writer_id} has duplicate steps: {steps}"
+        assert len(steps) == len(set(steps)), f"Writer {writer_id} has duplicate steps: {steps}"
 
         # All invocations completed
-        assert all(inv.status == InvocationStatus.COMPLETE for inv in invocations), \
+        assert all(inv.status == InvocationStatus.COMPLETE for inv in invocations), (
             f"Writer {writer_id} has incomplete invocations"
+        )
 
 
 # ==============================================================================
 # TEST 3: Concurrent Flow Scheduling
 # ==============================================================================
+
 
 @dataclass
 @flow_type
@@ -181,9 +177,7 @@ async def test_concurrent_flow_scheduling(in_memory_storage):
         return task_ids
 
     # Run schedulers concurrently
-    all_task_ids = await asyncio.gather(*[
-        scheduler_task(i) for i in range(num_schedulers)
-    ])
+    all_task_ids = await asyncio.gather(*[scheduler_task(i) for i in range(num_schedulers)])
 
     # Flatten task IDs
     flat_task_ids = [tid for task_ids in all_task_ids for tid in task_ids]
@@ -192,13 +186,15 @@ async def test_concurrent_flow_scheduling(in_memory_storage):
     assert len(flat_task_ids) == num_schedulers * flows_per_scheduler
 
     # Verify no duplicate task IDs (each flow scheduled once)
-    assert len(flat_task_ids) == len(set(flat_task_ids)), \
+    assert len(flat_task_ids) == len(set(flat_task_ids)), (
         "Duplicate task IDs detected - flows scheduled multiple times!"
+    )
 
 
 # ==============================================================================
 # TEST 4: Worker Queue Dequeue Race Condition
 # ==============================================================================
+
 
 @dataclass
 @flow_type
@@ -237,7 +233,7 @@ async def test_workers_dont_dequeue_same_flow(in_memory_storage):
         task_ids.append(task_id)
 
     # Track which worker claimed which flow
-    claimed_flows: Set[str] = set()
+    claimed_flows: set[str] = set()
     lock = asyncio.Lock()
 
     async def worker_dequeue_test(worker_id: str):
@@ -267,24 +263,24 @@ async def test_workers_dont_dequeue_same_flow(in_memory_storage):
         return claimed_by_this_worker
 
     # Run workers concurrently
-    worker_results = await asyncio.gather(*[
-        worker_dequeue_test(f"worker_{i}")
-        for i in range(num_workers)
-    ])
+    worker_results = await asyncio.gather(
+        *[worker_dequeue_test(f"worker_{i}") for i in range(num_workers)]
+    )
 
     # Verify all flows claimed exactly once
     total_claimed = sum(len(claims) for claims in worker_results)
-    assert total_claimed == num_flows, \
-        f"Expected {num_flows} flows claimed, got {total_claimed}"
+    assert total_claimed == num_flows, f"Expected {num_flows} flows claimed, got {total_claimed}"
 
     # Verify no duplicate claims
-    assert len(claimed_flows) == num_flows, \
+    assert len(claimed_flows) == num_flows, (
         f"Duplicate claims detected: {num_flows} flows but {len(claimed_flows)} unique claims"
+    )
 
 
 # ==============================================================================
 # TEST 5: Event Notification Race Conditions
 # ==============================================================================
+
 
 @dataclass
 @flow_type
@@ -304,7 +300,7 @@ async def test_work_notify_wakes_all_waiting_workers(in_memory_storage):
 
     When work arrives, waiting workers should be notified correctly.
     """
-    if not hasattr(in_memory_storage, 'work_notify'):
+    if not hasattr(in_memory_storage, "work_notify"):
         pytest.skip("Storage doesn't support work notifications")
 
     num_workers = 3
@@ -314,19 +310,15 @@ async def test_work_notify_wakes_all_waiting_workers(in_memory_storage):
         """Worker waits for notification."""
         try:
             # Wait for work notification (with timeout)
-            await asyncio.wait_for(
-                in_memory_storage.work_notify().wait(),
-                timeout=1.0
-            )
+            await asyncio.wait_for(in_memory_storage.work_notify().wait(), timeout=1.0)
             work_received.append(worker_id)
             in_memory_storage.work_notify().clear()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
     # Start workers waiting
     worker_tasks = [
-        asyncio.create_task(worker_wait_for_work(f"worker_{i}"))
-        for i in range(num_workers)
+        asyncio.create_task(worker_wait_for_work(f"worker_{i}")) for i in range(num_workers)
     ]
 
     # Give workers time to start waiting
@@ -347,6 +339,7 @@ async def test_work_notify_wakes_all_waiting_workers(in_memory_storage):
 # ==============================================================================
 # TEST 6: Interleaved Read-Write Operations
 # ==============================================================================
+
 
 @pytest.mark.concurrency
 @pytest.mark.asyncio
@@ -390,13 +383,15 @@ async def test_interleaved_reads_writes_consistent(in_memory_storage):
 
     # Verify snapshots show monotonically increasing progress
     for i in range(1, len(read_snapshots)):
-        assert read_snapshots[i] >= read_snapshots[i-1], \
-            f"Read snapshots not monotonic: {read_snapshots[i-1]} -> {read_snapshots[i]}"
+        assert read_snapshots[i] >= read_snapshots[i - 1], (
+            f"Read snapshots not monotonic: {read_snapshots[i - 1]} -> {read_snapshots[i]}"
+        )
 
 
 # ==============================================================================
 # TEST 7: Flow Completion Race Conditions
 # ==============================================================================
+
 
 @dataclass
 @flow_type
@@ -437,21 +432,15 @@ async def test_concurrent_flow_completion_updates(in_memory_storage):
         # Execute
         deserialized = pickle.loads(scheduled.flow_data)
         executor = Executor(deserialized, in_memory_storage, scheduled.flow_id)
-        outcome = await executor.run(lambda f: f.run())
+        await executor.run(lambda f: f.run())
 
         # Mark complete
-        await in_memory_storage.complete_flow(
-            task_id=scheduled.task_id,
-            status=TaskStatus.COMPLETE
-        )
+        await in_memory_storage.complete_flow(task_id=scheduled.task_id, status=TaskStatus.COMPLETE)
 
         return task_id
 
     # Run all concurrently
-    completed_task_ids = await asyncio.gather(*[
-        schedule_and_execute(i)
-        for i in range(num_flows)
-    ])
+    completed_task_ids = await asyncio.gather(*[schedule_and_execute(i) for i in range(num_flows)])
 
     # All flows should have completed
     assert len(completed_task_ids) == num_flows
@@ -461,6 +450,7 @@ async def test_concurrent_flow_completion_updates(in_memory_storage):
 # ==============================================================================
 # TEST 8: Deadlock Prevention
 # ==============================================================================
+
 
 @pytest.mark.concurrency
 @pytest.mark.asyncio
@@ -501,10 +491,7 @@ async def test_no_deadlock_with_concurrent_locks(in_memory_storage):
         return op_id
 
     # If this hangs, we have a deadlock
-    results = await asyncio.gather(*[
-        complex_operation(i)
-        for i in range(num_operations)
-    ])
+    results = await asyncio.gather(*[complex_operation(i) for i in range(num_operations)])
 
     # All operations should complete
     assert len(results) == num_operations

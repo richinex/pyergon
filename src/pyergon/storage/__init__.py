@@ -17,12 +17,12 @@ Clients depend on ExecutionLog abstraction, not concrete implementations.
 
 from pyergon.storage.base import (
     ExecutionLog,
-    WorkNotificationSource,
     TimerNotificationSource,
+    WorkNotificationSource,
 )
-from pyergon.storage.sqlite import SqliteExecutionLog
-from pyergon.storage.redis import RedisExecutionLog
 from pyergon.storage.memory import InMemoryExecutionLog
+from pyergon.storage.redis import RedisExecutionLog
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 __all__ = [
     "ExecutionLog",

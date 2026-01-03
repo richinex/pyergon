@@ -12,16 +12,17 @@ From Dave Cheney:
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
+
 from uuid_extensions import uuid7
 
 from pyergon.core import (
     Invocation,
     InvocationStatus,
+    RetryPolicy,
     ScheduledFlow,
     TaskStatus,
-    RetryPolicy,
 )
+from pyergon.core.timer_info import TimerInfo
 from pyergon.storage.base import ExecutionLog, StorageError
 
 
@@ -83,8 +84,8 @@ class InMemoryExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: Optional[int] = None,
-        retry_policy: Optional[RetryPolicy] = None
+        delay: int | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """
         Record the start of a step execution.
@@ -134,27 +135,21 @@ class InMemoryExecutionLog(ExecutionLog):
                 is_retryable=None,
                 timer_fire_at=None,
                 timer_name=None,
-                updated_at=now
+                updated_at=now,
             )
 
             self._invocations[key] = invocation
             return invocation
 
     async def log_invocation_completion(
-        self,
-        flow_id: str,
-        step: int,
-        return_value: bytes,
-        is_retryable: Optional[bool] = None
+        self, flow_id: str, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
         """Record the completion of a step execution."""
         async with self._lock:
             key = (flow_id, step)
 
             if key not in self._invocations:
-                raise StorageError(
-                    f"Invocation not found: flow_id={flow_id}, step={step}"
-                )
+                raise StorageError(f"Invocation not found: flow_id={flow_id}, step={step}")
 
             old = self._invocations[key]
 
@@ -176,17 +171,13 @@ class InMemoryExecutionLog(ExecutionLog):
                 is_retryable=is_retryable,
                 timer_fire_at=old.timer_fire_at,
                 timer_name=old.timer_name,
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
             )
 
             self._invocations[key] = updated
             return updated
 
-    async def get_invocation(
-        self,
-        flow_id: str,
-        step: int
-    ) -> Optional[Invocation]:
+    async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
         """Retrieve a specific step invocation."""
         async with self._lock:
             return self._invocations.get((flow_id, step))
@@ -194,34 +185,23 @@ class InMemoryExecutionLog(ExecutionLog):
     async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
         """Get all invocations for a flow."""
         async with self._lock:
-            return [
-                inv for (fid, _), inv in self._invocations.items()
-                if fid == flow_id
-            ]
+            return [inv for (fid, _), inv in self._invocations.items() if fid == flow_id]
 
     async def get_incomplete_flows(self) -> list[Invocation]:
         """Get all flows with incomplete invocations."""
         async with self._lock:
             # Return invocations that are not complete
-            return [
-                inv for inv in self._invocations.values()
-                if not inv.is_complete
-            ]
+            return [inv for inv in self._invocations.values() if not inv.is_complete]
 
     async def has_non_retryable_error(self, flow_id: str) -> bool:
         """Check if flow has non-retryable error."""
         async with self._lock:
             for (fid, _), inv in self._invocations.items():
-                if fid == flow_id and inv.is_retryable == False:
+                if fid == flow_id and not inv.is_retryable:
                     return True
             return False
 
-    async def update_is_retryable(
-        self,
-        flow_id: str,
-        step: int,
-        is_retryable: bool
-    ) -> None:
+    async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
         """Update is_retryable field."""
         async with self._lock:
             key = (flow_id, step)
@@ -244,7 +224,7 @@ class InMemoryExecutionLog(ExecutionLog):
                     is_retryable=is_retryable,
                     timer_fire_at=old.timer_fire_at,
                     timer_name=old.timer_name,
-                    updated_at=datetime.now()
+                    updated_at=datetime.now(),
                 )
                 self._invocations[key] = updated
 
@@ -274,7 +254,7 @@ class InMemoryExecutionLog(ExecutionLog):
 
             return flow.task_id
 
-    async def dequeue_flow(self, worker_id: str) -> Optional[ScheduledFlow]:
+    async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
         """
         Claim and retrieve a pending flow from queue.
 
@@ -311,7 +291,7 @@ class InMemoryExecutionLog(ExecutionLog):
                         completed_at=flow.completed_at,
                         scheduled_for=flow.scheduled_for,
                         parent_metadata=flow.parent_metadata,
-                        retry_policy=flow.retry_policy
+                        retry_policy=flow.retry_policy,
                     )
                     self._scheduled_flows[task_id] = updated
                     return updated
@@ -319,10 +299,7 @@ class InMemoryExecutionLog(ExecutionLog):
             return None
 
     async def complete_flow(
-        self,
-        task_id: str,
-        status: TaskStatus,
-        error_message: Optional[str] = None
+        self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
         """
         Update flow task status.
@@ -366,7 +343,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 completed_at=completed_at,
                 scheduled_for=flow.scheduled_for,
                 parent_metadata=flow.parent_metadata,
-                retry_policy=flow.retry_policy
+                retry_policy=flow.retry_policy,
             )
 
             self._scheduled_flows[task_id] = updated
@@ -376,12 +353,7 @@ class InMemoryExecutionLog(ExecutionLog):
             self._status_notify.set()
             self._status_notify.clear()  # Reset for next notification
 
-    async def retry_flow(
-        self,
-        task_id: str,
-        error_message: str,
-        delay: timedelta
-    ) -> None:
+    async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
         """
         Reschedule a failed flow for retry after a delay.
 
@@ -419,7 +391,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 completed_at=None,
                 scheduled_for=scheduled_for,  # Schedule for future
                 parent_metadata=flow.parent_metadata,
-                retry_policy=flow.retry_policy
+                retry_policy=flow.retry_policy,
             )
 
             self._scheduled_flows[task_id] = updated
@@ -429,7 +401,7 @@ class InMemoryExecutionLog(ExecutionLog):
             self._work_notify.set()
             self._work_notify.clear()  # Reset for next notification
 
-    async def get_scheduled_flow(self, task_id: str) -> Optional[ScheduledFlow]:
+    async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """Retrieve a scheduled flow by task ID."""
         async with self._lock:
             return self._scheduled_flows.get(task_id)
@@ -439,11 +411,7 @@ class InMemoryExecutionLog(ExecutionLog):
     # ========================================================================
 
     async def log_timer(
-        self,
-        flow_id: str,
-        step: int,
-        timer_fire_at: datetime,
-        timer_name: Optional[str] = None
+        self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
         """Schedule a durable timer."""
         async with self._lock:
@@ -467,7 +435,7 @@ class InMemoryExecutionLog(ExecutionLog):
                     is_retryable=old.is_retryable,
                     timer_fire_at=timer_fire_at,
                     timer_name=timer_name,
-                    updated_at=datetime.now()
+                    updated_at=datetime.now(),
                 )
                 self._invocations[key] = updated
 
@@ -476,7 +444,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 self._timer_notify.set()
                 self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(self, now: datetime) -> list['TimerInfo']:
+    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
         """
         Get all timers that have expired.
 
@@ -487,22 +455,26 @@ class InMemoryExecutionLog(ExecutionLog):
         async with self._lock:
             expired = []
             for (flow_id, step), inv in self._invocations.items():
-                if (inv.status == InvocationStatus.WAITING_FOR_TIMER and
-                    inv.timer_fire_at is not None and
-                    inv.timer_fire_at <= now):
-                    expired.append(TimerInfo(
-                        flow_id=flow_id,
-                        step=step,
-                        fire_at=inv.timer_fire_at,
-                        timer_name=inv.timer_name
-                    ))
+                if (
+                    inv.status == InvocationStatus.WAITING_FOR_TIMER
+                    and inv.timer_fire_at is not None
+                    and inv.timer_fire_at <= now
+                ):
+                    expired.append(
+                        TimerInfo(
+                            flow_id=flow_id,
+                            step=step,
+                            fire_at=inv.timer_fire_at,
+                            timer_name=inv.timer_name,
+                        )
+                    )
             return expired
 
     async def claim_timer(
         self,
         flow_id: str,
         step: int,
-        worker_id: str  # noqa: ARG002 - Required by protocol signature
+        worker_id: str,  # noqa: ARG002 - Required by protocol signature
     ) -> bool:
         """Claim an expired timer (optimistic concurrency)."""
         async with self._lock:
@@ -532,7 +504,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 is_retryable=inv.is_retryable,
                 timer_fire_at=inv.timer_fire_at,
                 timer_name=inv.timer_name,
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
             )
             self._invocations[key] = updated
 
@@ -548,11 +520,7 @@ class InMemoryExecutionLog(ExecutionLog):
     # ========================================================================
 
     async def store_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str,
-        result: bytes
+        self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
         """Store suspension result data (timer or signal completion)."""
         async with self._lock:
@@ -560,33 +528,20 @@ class InMemoryExecutionLog(ExecutionLog):
             self._suspension_results[key] = result
 
     async def get_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> Optional[bytes]:
+        self, flow_id: str, step: int, suspension_key: str
+    ) -> bytes | None:
         """Get suspension result data if available."""
         async with self._lock:
             key = (flow_id, step, suspension_key)
             return self._suspension_results.get(key)
 
-    async def remove_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> None:
+    async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
         """Remove suspension result data after consuming it."""
         async with self._lock:
             key = (flow_id, step, suspension_key)
             self._suspension_results.pop(key, None)
 
-    async def log_signal(
-        self,
-        flow_id: str,
-        step: int,
-        signal_name: str
-    ) -> None:
+    async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
         """
         Mark an invocation as waiting for an external signal.
 
@@ -596,9 +551,7 @@ class InMemoryExecutionLog(ExecutionLog):
         async with self._lock:
             key = (flow_id, step)
             if key not in self._invocations:
-                raise StorageError(
-                    f"Invocation not found: flow_id={flow_id}, step={step}"
-                )
+                raise StorageError(f"Invocation not found: flow_id={flow_id}, step={step}")
 
             inv = self._invocations[key]
 
@@ -621,7 +574,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 is_retryable=inv.is_retryable,
                 timer_fire_at=inv.timer_fire_at,
                 timer_name=signal_name,  # Store signal name in timer_name field
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
             )
             self._invocations[key] = updated
 
@@ -671,7 +624,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 updated_at=datetime.now(),
                 retry_count=task_to_resume.retry_count,
                 retry_policy=task_to_resume.retry_policy,
-                parent_metadata=task_to_resume.parent_metadata
+                parent_metadata=task_to_resume.parent_metadata,
             )
 
             # Replace in scheduled_flows dict
@@ -695,12 +648,9 @@ class InMemoryExecutionLog(ExecutionLog):
         """
         async with self._lock:
             # Filter invocations by flow_id
-            return [
-                inv for (fid, _), inv in self._invocations.items()
-                if fid == flow_id
-            ]
+            return [inv for (fid, _), inv in self._invocations.items() if fid == flow_id]
 
-    async def get_next_timer_fire_time(self) -> Optional[datetime]:
+    async def get_next_timer_fire_time(self) -> datetime | None:
         """
         Get the earliest timer fire time across all flows.
 

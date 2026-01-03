@@ -10,33 +10,34 @@ This test verifies Phase 2 of the implementation (Event-Driven Architecture):
 **Rust Reference**: ergon_rust/ergon/src/executor/instance.rs lines 91-136
 """
 
-import pytest
 from dataclasses import dataclass
-from uuid import uuid4, UUID
+from uuid import uuid4
 
-from pyergon.decorators import flow, flow_type, step
+import pytest
+
+from pyergon.decorators import flow, flow_type
 from pyergon.executor import Executor
 from pyergon.executor.outcome import (
-    FlowOutcome,
     Completed,
     Suspended,
     SuspendReason,
     is_completed,
-    is_suspended
+    is_suspended,
 )
 from pyergon.executor.signal import await_external_signal
 from pyergon.executor.timer import schedule_timer
 from pyergon.storage.memory import InMemoryExecutionLog
 
-
 # =============================================================================
 # Test Flows
 # =============================================================================
+
 
 @dataclass
 @flow_type
 class SimpleFlow:
     """Flow that completes successfully."""
+
     value: int
 
     @flow
@@ -49,6 +50,7 @@ class SimpleFlow:
 @flow_type
 class ErrorFlow:
     """Flow that raises an error."""
+
     # Dataclass needs at least one field
     dummy: int = 0
 
@@ -62,6 +64,7 @@ class ErrorFlow:
 @flow_type
 class TimerFlow:
     """Flow that suspends on a timer."""
+
     # Dataclass needs at least one field
     dummy: int = 0
 
@@ -77,6 +80,7 @@ class TimerFlow:
 @flow_type
 class SignalFlow:
     """Flow that suspends on a signal."""
+
     # Dataclass needs at least one field
     dummy: int = 0
 
@@ -92,6 +96,7 @@ class SignalFlow:
 # =============================================================================
 # Test Cases
 # =============================================================================
+
 
 @pytest.mark.asyncio
 async def test_completed_success():
@@ -143,8 +148,9 @@ async def test_completed_error():
     assert is_completed(outcome), "is_completed() should return True"
 
     # Verify result is an exception
-    assert isinstance(outcome.result, ValueError), \
+    assert isinstance(outcome.result, ValueError), (
         f"Expected ValueError, got {type(outcome.result)}"
+    )
     assert str(outcome.result) == "Simulated error"
     assert not outcome.is_success(), "Should not be successful"
     assert outcome.is_failure(), "Should be a failure"
@@ -181,7 +187,9 @@ async def test_suspended_timer():
     reason = outcome.reason
     assert isinstance(reason, SuspendReason)
     # Compare flow_ids as strings (reason.flow_id is always a string)
-    assert reason.flow_id == executor.flow_id, f"Expected flow_id={executor.flow_id}, got {reason.flow_id}"
+    assert reason.flow_id == executor.flow_id, (
+        f"Expected flow_id={executor.flow_id}, got {reason.flow_id}"
+    )
     assert reason.step == 0, f"Timer should be at step 0, got {reason.step}"
     assert reason.is_timer(), "Should be a timer suspension"
     assert not reason.is_signal(), "Should not be a signal suspension"
@@ -219,8 +227,9 @@ async def test_suspended_signal():
     assert isinstance(reason, SuspendReason)
     assert reason.is_signal(), "Should be a signal suspension"
     assert not reason.is_timer(), "Should not be a timer suspension"
-    assert reason.signal_name == "payment_confirmed", \
+    assert reason.signal_name == "payment_confirmed", (
         f"Expected signal_name='payment_confirmed', got {reason.signal_name!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -240,11 +249,7 @@ async def test_suspend_reason_helpers():
     assert "Timer" in str(timer_reason)
 
     # Test signal reason
-    signal_reason = SuspendReason(
-        flow_id=flow_id,
-        step=10,
-        signal_name="order_confirmed"
-    )
+    signal_reason = SuspendReason(flow_id=flow_id, step=10, signal_name="order_confirmed")
     assert signal_reason.is_signal()
     assert not signal_reason.is_timer()
     assert "Signal" in str(signal_reason)

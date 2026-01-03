@@ -57,10 +57,7 @@ class InvocationStatus(Enum):
     @property
     def is_waiting(self) -> bool:
         """Check if this status represents a waiting state."""
-        return self in (
-            InvocationStatus.WAITING_FOR_SIGNAL,
-            InvocationStatus.WAITING_FOR_TIMER
-        )
+        return self in (InvocationStatus.WAITING_FOR_SIGNAL, InvocationStatus.WAITING_FOR_TIMER)
 
     def __str__(self) -> str:
         return self.value

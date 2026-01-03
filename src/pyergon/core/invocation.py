@@ -12,12 +12,12 @@ COMPLIANCE: Matches Rust ergon src/core/invocation.rs exactly
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, TypeVar
+from typing import TypeVar
 
-from pyergon.core.status import InvocationStatus
 from pyergon.core.retry import RetryPolicy
+from pyergon.core.status import InvocationStatus
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
@@ -95,7 +95,7 @@ class Invocation:
     than previous execution (non-deterministic behavior).
     """
 
-    return_value: Optional[bytes] = None
+    return_value: bytes | None = None
     """Serialized result (using pickle), None if not yet complete.
 
     Rust: return_value: Option<Vec<u8>>
@@ -129,7 +129,7 @@ class Invocation:
     # Retry configuration (matches Rust lines 62-68)
     # ==========================================================================
 
-    delay: Optional[int] = None
+    delay: int | None = None
     """Optional delay before execution in milliseconds.
 
     Rust: delay: Option<i64>
@@ -138,7 +138,7 @@ class Invocation:
     Used for step delays: @step(delay=100, unit="MILLIS")
     """
 
-    retry_policy: Optional[RetryPolicy] = None
+    retry_policy: RetryPolicy | None = None
     """Retry policy for this invocation (None means no retries).
 
     Rust: retry_policy: Option<RetryPolicy>
@@ -147,7 +147,7 @@ class Invocation:
     Controls how many times and when to retry on transient errors.
     """
 
-    is_retryable: Optional[bool] = None
+    is_retryable: bool | None = None
     """Whether the cached error is retryable.
 
     Rust: is_retryable: Option<bool>
@@ -165,14 +165,14 @@ class Invocation:
     # Timer support (matches Rust lines 69-74)
     # ==========================================================================
 
-    timer_fire_at: Optional[datetime] = None
+    timer_fire_at: datetime | None = None
     """When the timer should fire (for WAITING_FOR_TIMER status).
 
     Rust: timer_fire_at: Option<DateTime<Utc>>
     Python: Optional[datetime]
     """
 
-    timer_name: Optional[str] = None
+    timer_name: str | None = None
     """Optional timer name for debugging.
 
     Rust: timer_name: Option<String>
@@ -210,7 +210,7 @@ class Invocation:
         """
         return self.params_hash
 
-    def get_delay(self) -> Optional[int]:
+    def get_delay(self) -> int | None:
         """Get the delay in milliseconds.
 
         Rust: pub fn delay(&self) -> Option<Duration>
@@ -218,14 +218,14 @@ class Invocation:
         """
         return self.delay
 
-    def get_retry_policy(self) -> Optional[RetryPolicy]:
+    def get_retry_policy(self) -> RetryPolicy | None:
         """Get the retry policy.
 
         Rust: pub fn retry_policy(&self) -> Option<RetryPolicy>
         """
         return self.retry_policy
 
-    def get_is_retryable(self) -> Optional[bool]:
+    def get_is_retryable(self) -> bool | None:
         """Get whether this invocation has a retryable error.
 
         Rust: pub fn is_retryable(&self) -> Option<bool>
@@ -260,7 +260,7 @@ class Invocation:
         self.return_value = return_value
         self.updated_at = datetime.now()
 
-    def set_is_retryable(self, is_retryable: Optional[bool]) -> None:
+    def set_is_retryable(self, is_retryable: bool | None) -> None:
         """Set whether this error is retryable.
 
         Rust: pub fn set_is_retryable(&mut self, is_retryable: Option<bool>)
@@ -268,7 +268,7 @@ class Invocation:
         self.is_retryable = is_retryable
         self.updated_at = datetime.now()
 
-    def set_timer_fire_at(self, fire_at: Optional[datetime]) -> None:
+    def set_timer_fire_at(self, fire_at: datetime | None) -> None:
         """Set when the timer should fire.
 
         Rust: pub fn set_timer_fire_at(&mut self, fire_at: Option<DateTime<Utc>>)
@@ -276,7 +276,7 @@ class Invocation:
         self.timer_fire_at = fire_at
         self.updated_at = datetime.now()
 
-    def set_timer_name(self, name: Optional[str]) -> None:
+    def set_timer_name(self, name: str | None) -> None:
         """Set the timer name.
 
         Rust: pub fn set_timer_name(&mut self, name: Option<String>)
@@ -300,7 +300,7 @@ class Invocation:
         """
         return pickle.loads(self.parameters)
 
-    def deserialize_return_value(self, type_: type[T]) -> Optional[T]:
+    def deserialize_return_value(self, type_: type[T]) -> T | None:
         """Deserialize return value to the specified type.
 
         Rust: pub fn deserialize_return_value<T: for<'de> Deserialize<'de>>(&self) -> Result<Option<T>>

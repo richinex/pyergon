@@ -4,10 +4,12 @@ Async tests for Ergon Python bindings - Phase 2
 Tests async storage operations.
 """
 
-import pytest
-import pyergon
-import uuid
 import asyncio
+import uuid
+
+import pytest
+
+import pyergon
 
 
 @pytest.mark.asyncio
@@ -89,10 +91,7 @@ async def test_concurrent_operations():
     storage = pyergon.InMemoryExecutionLog()
 
     # Create multiple concurrent tasks
-    tasks = [
-        storage.get_invocation(str(uuid.uuid4()), step=0)
-        for _ in range(10)
-    ]
+    tasks = [storage.get_invocation(str(uuid.uuid4()), step=0) for _ in range(10)]
 
     # All should complete without errors
     results = await asyncio.gather(*tasks)

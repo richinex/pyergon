@@ -14,13 +14,12 @@ We don't raise exceptions on signaling failures - we log and return gracefully,
 allowing the system to continue processing other flows.
 """
 
-import pickle
 import logging
-from typing import Optional
+import pickle
 
-from pyergon.storage.base import ExecutionLog
-from pyergon.executor.suspension_payload import SuspensionPayload
 from pyergon.core import InvocationStatus
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +29,9 @@ __all__ = ["complete_child_flow"]
 async def complete_child_flow(
     storage: ExecutionLog,
     flow_id: str,
-    parent_metadata: Optional[tuple[str, str]],
+    parent_metadata: tuple[str, str] | None,
     success: bool,
-    error_msg: Optional[str] = None
+    error_msg: str | None = None,
 ) -> None:
     """
     Signal parent flow when child flow completes.
@@ -110,7 +109,7 @@ async def complete_child_flow(
             payload = SuspensionPayload(
                 success=True,
                 data=result_bytes,
-                is_retryable=None  # Not applicable for success
+                is_retryable=None,  # Not applicable for success
             )
 
         except Exception as e:
@@ -132,11 +131,7 @@ async def complete_child_flow(
         except Exception as e:
             logger.warning(f"Failed to get retryability for flow {flow_id}: {e}")
 
-        payload = SuspensionPayload(
-            success=False,
-            data=error_bytes,
-            is_retryable=is_retryable
-        )
+        payload = SuspensionPayload(success=False, data=error_bytes, is_retryable=is_retryable)
 
     # Serialize signal payload
     # From Rust lines 117-127
@@ -156,33 +151,26 @@ async def complete_child_flow(
         invocations = await storage.get_invocations_for_flow(parent_id)
 
         for inv in invocations:
-            if (inv.status == InvocationStatus.WAITING_FOR_SIGNAL and
-                    inv.timer_name == signal_token):
+            if inv.status == InvocationStatus.WAITING_FOR_SIGNAL and inv.timer_name == signal_token:
                 waiting_step = inv
                 waiting_step_num = inv.step
                 break
 
         if waiting_step is None:
             logger.debug(
-                f"No waiting step found for parent flow {parent_id} "
-                f"with token {signal_token}"
+                f"No waiting step found for parent flow {parent_id} with token {signal_token}"
             )
             return
 
     except Exception as e:
-        logger.error(
-            f"Failed to get invocations for parent flow {parent_id}: {e}"
-        )
+        logger.error(f"Failed to get invocations for parent flow {parent_id}: {e}")
         return
 
     # CRITICAL: Store suspension result - must succeed for parent to resume
     # From Rust lines 152-166
     try:
         await storage.store_suspension_result(
-            parent_id,
-            waiting_step_num,
-            signal_token,
-            signal_bytes
+            parent_id, waiting_step_num, signal_token, signal_bytes
         )
     except Exception as e:
         logger.error(
@@ -204,9 +192,7 @@ async def complete_child_flow(
                 f"({status}{error_suffix})"
             )
         else:
-            logger.debug(
-                f"Parent flow {parent_id} not resumed (not in SUSPENDED state)"
-            )
+            logger.debug(f"Parent flow {parent_id} not resumed (not in SUSPENDED state)")
 
     except Exception as e:
         logger.error(f"Failed to resume parent flow {parent_id}: {e}")

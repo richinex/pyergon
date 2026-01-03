@@ -19,21 +19,21 @@ following Dave Cheney's naming advice:
 - pyergon.Worker (not pyergon.FlowWorker)
 """
 
+from pyergon.executor.child_completion import complete_child_flow
+from pyergon.executor.dag import DagSummary, DeferredRegistry, StepHandle, execute_dag
 from pyergon.executor.instance import Executor, execute_flow
 from pyergon.executor.outcome import (
-    SuspendReason,
     Completed,
-    Suspended,
     FlowOutcome,
+    Suspended,
+    SuspendReason,
     is_completed,
     is_suspended,
 )
-from pyergon.executor.suspension_payload import SuspensionPayload
 from pyergon.executor.pending_child import PendingChild
-from pyergon.executor.child_completion import complete_child_flow
-from pyergon.executor.timer import schedule_timer, schedule_timer_named
 from pyergon.executor.signal import await_external_signal, signal_resume
-from pyergon.executor.dag import StepHandle, DeferredRegistry, DagSummary, execute_dag
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.executor.timer import schedule_timer, schedule_timer_named
 
 __all__ = [
     # Executor

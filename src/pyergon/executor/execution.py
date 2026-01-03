@@ -18,13 +18,12 @@ of the worker loop implementation.
 """
 
 import logging
-from typing import Optional
 from datetime import timedelta
 
-from pyergon.storage.base import ExecutionLog
-from pyergon.core import TaskStatus, ScheduledFlow, InvocationStatus
+from pyergon.core import InvocationStatus, ScheduledFlow, TaskStatus
 from pyergon.executor.child_completion import complete_child_flow
 from pyergon.executor.outcome import SuspendReason
+from pyergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ async def handle_flow_completion(
     worker_id: str,
     flow_task_id: str,
     flow_id: str,
-    parent_metadata: Optional[tuple[str, str]]
+    parent_metadata: tuple[str, str] | None,
 ) -> None:
     """
     Handle successful flow completion.
@@ -70,9 +69,7 @@ async def handle_flow_completion(
         )
         ```
     """
-    logger.info(
-        f"Worker {worker_id} completed flow: task_id={flow_task_id}"
-    )
+    logger.info(f"Worker {worker_id} completed flow: task_id={flow_task_id}")
 
     # Complete child flow (Level 3 API) - signals parent after successful completion
     # From Rust line 362
@@ -81,7 +78,7 @@ async def handle_flow_completion(
         flow_id=flow_id,
         parent_metadata=parent_metadata,
         success=True,
-        error_msg=None
+        error_msg=None,
     )
 
     # Mark task as complete in queue
@@ -98,7 +95,7 @@ async def handle_flow_error(
     flow: ScheduledFlow,
     flow_task_id: str,
     error: Exception,
-    parent_metadata: Optional[tuple[str, str]]
+    parent_metadata: tuple[str, str] | None,
 ) -> None:
     """
     Handle failed flow, checking retry policy and signaling parent if needed.
@@ -133,20 +130,16 @@ async def handle_flow_error(
     """
     error_msg = str(error)
 
-    logger.error(
-        f"Worker {worker_id} flow failed: task_id={flow_task_id}, error={error_msg}"
-    )
+    logger.error(f"Worker {worker_id} flow failed: task_id={flow_task_id}, error={error_msg}")
 
     # Mark non-retryable errors in storage
     # From Rust lines 388-397
     # Check if error has is_retryable attribute (RetryableError protocol)
-    if hasattr(error, 'is_retryable') and not error.is_retryable():
+    if hasattr(error, "is_retryable") and not error.is_retryable():
         try:
             await storage.update_is_retryable(flow.flow_id, 0, False)
         except Exception as e:
-            logger.warning(
-                f"Worker {worker_id} failed to mark error as non-retryable: {e}"
-            )
+            logger.warning(f"Worker {worker_id} failed to mark error as non-retryable: {e}")
 
     # Check retry policy
     # From Rust lines 399-466
@@ -178,7 +171,7 @@ async def handle_flow_error(
             flow_id=flow.flow_id,
             parent_metadata=parent_metadata,
             success=False,
-            error_msg=error_msg
+            error_msg=error_msg,
         )
 
         # Mark task as failed
@@ -190,11 +183,7 @@ async def handle_flow_error(
 
 
 async def handle_suspended_flow(
-    storage: ExecutionLog,
-    worker_id: str,
-    flow_task_id: str,
-    flow_id: str,
-    reason: SuspendReason
+    storage: ExecutionLog, worker_id: str, flow_task_id: str, flow_id: str, reason: SuspendReason
 ) -> None:
     """
     Handle flow suspension for timer or signal.
@@ -224,9 +213,7 @@ async def handle_suspended_flow(
         )
         ```
     """
-    logger.info(
-        f"Worker {worker_id} flow suspended: task_id={flow_task_id}, reason={reason}"
-    )
+    logger.info(f"Worker {worker_id} flow suspended: task_id={flow_task_id}, reason={reason}")
 
     # Mark flow as SUSPENDED so resume_flow() can re-enqueue it
     # From Rust lines 282-288
@@ -251,39 +238,29 @@ async def handle_suspended_flow(
             if inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
                 # Check if signal arrived
                 signal_result = await storage.get_suspension_result(
-                    flow_id,
-                    inv.step,
-                    inv.timer_name or ""
+                    flow_id, inv.step, inv.timer_name or ""
                 )
                 should_resume = signal_result is not None
 
             elif inv.status == InvocationStatus.WAITING_FOR_TIMER:
                 # Check if timer fired and result is cached
                 timer_result = await storage.get_suspension_result(
-                    flow_id,
-                    inv.step,
-                    inv.timer_name or ""
+                    flow_id, inv.step, inv.timer_name or ""
                 )
                 should_resume = timer_result is not None
 
             if should_resume:
                 logger.debug(
-                    f"Worker {worker_id} resuming flow {flow_id} - "
-                    f"result arrived during suspension"
+                    f"Worker {worker_id} resuming flow {flow_id} - result arrived during suspension"
                 )
                 await storage.resume_flow(flow_id)
                 break
 
     except Exception as e:
-        logger.warning(
-            f"Worker {worker_id} failed to check for pending results: {e}"
-        )
+        logger.warning(f"Worker {worker_id} failed to check for pending results: {e}")
 
 
-async def check_should_retry(
-    storage: ExecutionLog,
-    flow: ScheduledFlow
-) -> Optional[timedelta]:
+async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> timedelta | None:
     """
     Check if a flow should be retried based on retry policy.
 
@@ -309,18 +286,14 @@ async def check_should_retry(
     try:
         has_non_retryable = await storage.has_non_retryable_error(flow.flow_id)
         if has_non_retryable:
-            logger.info(
-                f"Flow {flow.flow_id} has a non-retryable error - will not retry"
-            )
+            logger.info(f"Flow {flow.flow_id} has a non-retryable error - will not retry")
             return None
         else:
             logger.debug(
                 f"Flow {flow.flow_id} has no non-retryable errors - continuing to retry policy check"
             )
     except Exception as e:
-        logger.warning(
-            f"Failed to check for non-retryable errors for flow {flow.flow_id}: {e}"
-        )
+        logger.warning(f"Failed to check for non-retryable errors for flow {flow.flow_id}: {e}")
         # Continue anyway
 
     # Get the flow's invocation (step 0) to check retry policy
@@ -346,6 +319,7 @@ async def check_should_retry(
             f"using default: RetryPolicy.STANDARD (3 attempts)"
         )
         from pyergon.core import RetryPolicy
+
         policy = RetryPolicy.STANDARD
 
     next_attempt = flow.retry_count + 1

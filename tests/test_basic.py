@@ -5,6 +5,7 @@ Tests core type creation and basic operations.
 """
 
 import pytest
+
 import pyergon
 
 
@@ -25,8 +26,8 @@ def test_version():
 
 def test_sqlite_log_creation():
     """Test creating a SqliteExecutionLog."""
-    import tempfile
     import os
+    import tempfile
 
     # Use temporary file
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

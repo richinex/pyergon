@@ -16,7 +16,7 @@ By using compile-time type checking, we eliminate runtime type errors
 when invoking child flows.
 """
 
-from typing import Protocol, TypeVar, runtime_checkable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     pass
@@ -26,7 +26,7 @@ __all__ = ["InvokableFlow"]
 # Type variable for flow output type
 # Bound to object to allow any type
 # Reference: https://docs.python.org/3/library/typing.html#typing.TypeVar
-Output = TypeVar('Output')
+Output = TypeVar("Output")
 
 
 @runtime_checkable

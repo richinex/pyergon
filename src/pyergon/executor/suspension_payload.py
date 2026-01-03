@@ -105,7 +105,4 @@ class SuspensionPayload:
         """Readable representation for debugging."""
         data_len = len(self.data)
         retryable_str = f", retryable={self.is_retryable}" if self.is_retryable is not None else ""
-        return (
-            f"SuspensionPayload(success={self.success}, "
-            f"data_len={data_len}{retryable_str})"
-        )
+        return f"SuspensionPayload(success={self.success}, data_len={data_len}{retryable_str})"

@@ -20,12 +20,21 @@ Implementation follows Rust ergon's sqlite.rs with Python idioms:
 """
 
 import asyncio
-import aiosqlite
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
-from pyergon.core import Invocation, InvocationStatus, ScheduledFlow, TaskStatus
+import aiosqlite
+
+from pyergon.core import (
+    Invocation,
+    InvocationStatus,
+    RetryPolicy,
+    ScheduledFlow,
+    TaskStatus,
+)
+from pyergon.core.timer_info import TimerInfo
+from pyergon.executor.signal import SignalInfo
 from pyergon.storage.base import ExecutionLog, StorageError
 
 
@@ -64,7 +73,7 @@ class SqliteExecutionLog(ExecutionLog):
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
-        self._connection: Optional[aiosqlite.Connection] = None
+        self._connection: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()  # Serialize access to shared connection
 
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
@@ -127,7 +136,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._connection = await aiosqlite.connect(
             self.db_path,
             timeout=5.0,
-            isolation_level=None  # Autocommit mode for better concurrency
+            isolation_level=None,  # Autocommit mode for better concurrency
         )
 
         # Enable WAL mode for concurrent reads (from Rust ergon)
@@ -141,7 +150,7 @@ class SqliteExecutionLog(ExecutionLog):
         # Verify WAL mode was set (or accept "memory" for in-memory databases)
         if result:
             mode = result[0].upper()
-            if mode not in ('WAL', 'MEMORY'):
+            if mode not in ("WAL", "MEMORY"):
                 raise StorageError(f"Failed to enable WAL mode, got: {result[0]}")
 
         # Set synchronous mode to NORMAL for better performance
@@ -273,8 +282,8 @@ class SqliteExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: Optional[int] = None,
-        retry_policy: Optional['RetryPolicy'] = None
+        delay: int | None = None,
+        retry_policy: Optional["RetryPolicy"] = None,
     ) -> Invocation:
         """
         Record the start of a step execution.
@@ -298,25 +307,39 @@ class SqliteExecutionLog(ExecutionLog):
         # Serialize retry policy to JSON if present
         retry_policy_json = None
         if retry_policy is not None:
-            retry_policy_json = json.dumps({
-                'max_attempts': retry_policy.max_attempts,
-                'initial_delay_ms': retry_policy.initial_delay_ms,
-                'max_delay_ms': retry_policy.max_delay_ms,
-                'backoff_multiplier': retry_policy.backoff_multiplier
-            })
+            retry_policy_json = json.dumps(
+                {
+                    "max_attempts": retry_policy.max_attempts,
+                    "initial_delay_ms": retry_policy.initial_delay_ms,
+                    "max_delay_ms": retry_policy.max_delay_ms,
+                    "backoff_multiplier": retry_policy.backoff_multiplier,
+                }
+            )
 
         # Use INSERT with ON CONFLICT for idempotency (matches Rust line 365-369)
-        await self._connection.execute("""
+        await self._connection.execute(
+            """
             INSERT INTO execution_log (
                 id, step, timestamp, class_name, method_name, delay, status, attempts,
                 parameters, params_hash, retry_policy
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, step)
             DO UPDATE SET attempts = attempts + 1
-        """, (
-            invocation_id, step, timestamp_ms, class_name, method_name, delay,
-            InvocationStatus.PENDING.value, 1, parameters, params_hash, retry_policy_json
-        ))
+        """,
+            (
+                invocation_id,
+                step,
+                timestamp_ms,
+                class_name,
+                method_name,
+                delay,
+                InvocationStatus.PENDING.value,
+                1,
+                parameters,
+                params_hash,
+                retry_policy_json,
+            ),
+        )
 
         await self._connection.commit()
 
@@ -339,14 +362,11 @@ class SqliteExecutionLog(ExecutionLog):
             delay=delay,
             retry_policy=retry_policy,
             timer_fire_at=None,
-            timer_name=None
+            timer_name=None,
         )
 
     async def log_invocation_completion(
-        self,
-        flow_id: str,
-        step: int,
-        return_value: bytes
+        self, flow_id: str, step: int, return_value: bytes
     ) -> Invocation:
         """
         Record the completion of a step execution.
@@ -357,23 +377,20 @@ class SqliteExecutionLog(ExecutionLog):
         self._check_connected()
 
         # Update existing invocation (matches Rust line 399-408)
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             UPDATE execution_log
             SET status = 'COMPLETE', return_value = ?
             WHERE id = ? AND step = ?
-        """, (
-            return_value,
-            flow_id,
-            step
-        ))
+        """,
+            (return_value, flow_id, step),
+        )
 
         await self._connection.commit()
 
         # Check if update succeeded
         if cursor.rowcount == 0:
-            raise StorageError(
-                f"Invocation not found: flow_id={flow_id}, step={step}"
-            )
+            raise StorageError(f"Invocation not found: flow_id={flow_id}, step={step}")
 
         # Fetch and return updated invocation
         invocation = await self.get_invocation(flow_id, step)
@@ -384,11 +401,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         return invocation
 
-    async def get_invocation(
-        self,
-        flow_id: str,
-        step: int
-    ) -> Optional[Invocation]:
+    async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
         """
         Retrieve a specific step invocation.
 
@@ -398,13 +411,16 @@ class SqliteExecutionLog(ExecutionLog):
         self._check_connected()
 
         # Matches Rust SELECT query (sqlite.rs:435-437)
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
                    parameters, params_hash, return_value, delay, retry_policy,
                    is_retryable, timer_fire_at, timer_name
             FROM execution_log
             WHERE id = ? AND step = ?
-        """, (flow_id, step))
+        """,
+            (flow_id, step),
+        )
 
         row = await cursor.fetchone()
 
@@ -446,12 +462,15 @@ class SqliteExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             SELECT EXISTS(
                 SELECT 1 FROM execution_log
                 WHERE id = ? AND is_retryable = 0
             )
-        """, (flow_id,))
+        """,
+            (flow_id,),
+        )
 
         row = await cursor.fetchone()
         return bool(row[0]) if row else False
@@ -483,32 +502,37 @@ class SqliteExecutionLog(ExecutionLog):
         # Convert to milliseconds timestamps (Rust uses INTEGER milliseconds)
         created_at_millis = int(flow.created_at.timestamp() * 1000)
         updated_at_millis = int(flow.updated_at.timestamp() * 1000)
-        scheduled_for_millis = int(flow.scheduled_for.timestamp() * 1000) if flow.scheduled_for else None
+        scheduled_for_millis = (
+            int(flow.scheduled_for.timestamp() * 1000) if flow.scheduled_for else None
+        )
 
         async with self._lock:  # Serialize access to connection
-            await self._connection.execute("""
+            await self._connection.execute(
+                """
                 INSERT INTO flow_queue (
                     task_id, flow_id, flow_type, flow_data,
                     status, locked_by, created_at, updated_at,
                     retry_count, error_message, scheduled_for,
                     parent_flow_id, signal_token, version
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                flow.task_id,
-                flow.flow_id,
-                flow.flow_type,
-                flow.flow_data,
-                flow.status.value,  # Already uppercase (TaskStatus enum)
-                flow.locked_by,
-                created_at_millis,
-                updated_at_millis,
-                flow.retry_count,
-                flow.error_message,
-                scheduled_for_millis,
-                parent_flow_id,
-                signal_token,
-                flow.version
-            ))
+            """,
+                (
+                    flow.task_id,
+                    flow.flow_id,
+                    flow.flow_type,
+                    flow.flow_data,
+                    flow.status.value,  # Already uppercase (TaskStatus enum)
+                    flow.locked_by,
+                    created_at_millis,
+                    updated_at_millis,
+                    flow.retry_count,
+                    flow.error_message,
+                    scheduled_for_millis,
+                    parent_flow_id,
+                    signal_token,
+                    flow.version,
+                ),
+            )
 
             await self._connection.commit()
 
@@ -521,10 +545,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         return flow.task_id
 
-    async def dequeue_flow(
-        self,
-        worker_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
         """
         Claim and retrieve a pending flow from the queue.
 
@@ -546,7 +567,8 @@ class SqliteExecutionLog(ExecutionLog):
             try:
                 # Find a pending flow that is ready to execute
                 # (scheduled_for IS NULL or scheduled_for <= NOW)
-                cursor = await self._connection.execute("""
+                cursor = await self._connection.execute(
+                    """
                     UPDATE flow_queue
                     SET status = 'RUNNING',
                         locked_by = ?,
@@ -563,11 +585,13 @@ class SqliteExecutionLog(ExecutionLog):
                               status, locked_by, created_at, updated_at,
                               retry_count, error_message, scheduled_for,
                               parent_flow_id, signal_token, version
-                """, (
-                    worker_id,
-                    now_millis,
-                    now_millis  # For scheduled_for comparison
-                ))
+                """,
+                    (
+                        worker_id,
+                        now_millis,
+                        now_millis,  # For scheduled_for comparison
+                    ),
+                )
 
                 row = await cursor.fetchone()
 
@@ -606,7 +630,7 @@ class SqliteExecutionLog(ExecutionLog):
                     parent_metadata=parent_metadata,
                     version=row[13],
                     claimed_at=datetime.now(),  # Python extension
-                    completed_at=None  # Python extension
+                    completed_at=None,  # Python extension
                 )
 
             except Exception as e:
@@ -614,10 +638,7 @@ class SqliteExecutionLog(ExecutionLog):
                 raise StorageError(f"Failed to dequeue flow: {e}") from e
 
     async def complete_flow(
-        self,
-        task_id: str,
-        status: TaskStatus,
-        error_message: Optional[str] = None
+        self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
         """
         Mark a flow task as complete, failed, or suspended.
@@ -637,38 +658,50 @@ class SqliteExecutionLog(ExecutionLog):
         # **Rust Reference**: lines 675-686
         if status == TaskStatus.SUSPENDED:
             if error_message is not None:
-                cursor = await self._connection.execute("""
+                cursor = await self._connection.execute(
+                    """
                     UPDATE flow_queue
                     SET status = ?,
                         locked_by = NULL,
                         error_message = ?,
                         updated_at = ?
                     WHERE task_id = ?
-                """, (status.value, error_message, now_millis, task_id))
+                """,
+                    (status.value, error_message, now_millis, task_id),
+                )
             else:
-                cursor = await self._connection.execute("""
+                cursor = await self._connection.execute(
+                    """
                     UPDATE flow_queue
                     SET status = ?,
                         locked_by = NULL,
                         updated_at = ?
                     WHERE task_id = ?
-                """, (status.value, now_millis, task_id))
+                """,
+                    (status.value, now_millis, task_id),
+                )
         else:
             if error_message is not None:
-                cursor = await self._connection.execute("""
+                cursor = await self._connection.execute(
+                    """
                     UPDATE flow_queue
                     SET status = ?,
                         error_message = ?,
                         updated_at = ?
                     WHERE task_id = ?
-                """, (status.value, error_message, now_millis, task_id))
+                """,
+                    (status.value, error_message, now_millis, task_id),
+                )
             else:
-                cursor = await self._connection.execute("""
+                cursor = await self._connection.execute(
+                    """
                     UPDATE flow_queue
                     SET status = ?,
                         updated_at = ?
                     WHERE task_id = ?
-                """, (status.value, now_millis, task_id))
+                """,
+                    (status.value, now_millis, task_id),
+                )
 
         if cursor.rowcount == 0:
             raise StorageError(f"Flow not found: task_id={task_id}")
@@ -680,12 +713,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._status_notify.set()
         self._status_notify.clear()  # Reset for next notification
 
-    async def retry_flow(
-        self,
-        task_id: str,
-        error_message: str,
-        delay: timedelta
-    ) -> None:
+    async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
         """
         Reschedule a failed flow for retry after a delay.
 
@@ -724,12 +752,7 @@ class SqliteExecutionLog(ExecutionLog):
                 updated_at = ?
             WHERE task_id = ?
             """,
-            (
-                error_message,
-                scheduled_for_millis,
-                now_millis,
-                task_id
-            )
+            (error_message, scheduled_for_millis, now_millis, task_id),
         )
 
         if cursor.rowcount == 0:
@@ -742,10 +765,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._work_notify.set()
         self._work_notify.clear()  # Reset for next notification
 
-    async def get_scheduled_flow(
-        self,
-        task_id: str
-    ) -> Optional[ScheduledFlow]:
+    async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """
         Retrieve a scheduled flow by task ID.
 
@@ -754,14 +774,17 @@ class SqliteExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             SELECT task_id, flow_id, flow_type, flow_data,
                    status, locked_by, retry_count,
                    created_at, updated_at, parent_flow_id, signal_token,
                    error_message
             FROM flow_queue
             WHERE task_id = ?
-        """, (task_id,))
+        """,
+            (task_id,),
+        )
 
         row = await cursor.fetchone()
 
@@ -784,7 +807,7 @@ class SqliteExecutionLog(ExecutionLog):
             created_at=datetime.fromtimestamp(row[7] / 1000.0),
             updated_at=datetime.fromtimestamp(row[8] / 1000.0),
             parent_metadata=parent_metadata,
-            error_message=row[11]
+            error_message=row[11],
         )
 
     # ========================================================================
@@ -792,11 +815,7 @@ class SqliteExecutionLog(ExecutionLog):
     # ========================================================================
 
     async def log_timer(
-        self,
-        flow_id: str,
-        step: int,
-        timer_fire_at: datetime,
-        timer_name: Optional[str] = None
+        self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
         """
         Schedule a durable timer.
@@ -808,19 +827,16 @@ class SqliteExecutionLog(ExecutionLog):
 
         fire_at_millis = int(timer_fire_at.timestamp() * 1000)
 
-        await self._connection.execute("""
+        await self._connection.execute(
+            """
             UPDATE execution_log
             SET status = ?,
                 timer_fire_at = ?,
                 timer_name = ?
             WHERE id = ? AND step = ?
-        """, (
-            InvocationStatus.WAITING_FOR_TIMER.value,
-            fire_at_millis,
-            timer_name,
-            flow_id,
-            step
-        ))
+        """,
+            (InvocationStatus.WAITING_FOR_TIMER.value, fire_at_millis, timer_name, flow_id, step),
+        )
 
         await self._connection.commit()
 
@@ -828,10 +844,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._timer_notify.set()
         self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(
-        self,
-        now: datetime
-    ) -> list['TimerInfo']:
+    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
         """
         Get all timers that have expired.
 
@@ -843,14 +856,14 @@ class SqliteExecutionLog(ExecutionLog):
 
         now_millis = int(now.timestamp() * 1000)
 
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             SELECT id, step, timer_fire_at, timer_name
             FROM execution_log
             WHERE status = ? AND timer_fire_at <= ?
-        """, (
-            InvocationStatus.WAITING_FOR_TIMER.value,
-            now_millis
-        ))
+        """,
+            (InvocationStatus.WAITING_FOR_TIMER.value, now_millis),
+        )
 
         rows = await cursor.fetchall()
 
@@ -860,17 +873,13 @@ class SqliteExecutionLog(ExecutionLog):
             TimerInfo(
                 flow_id=row[0],
                 step=row[1],
-                fire_at=datetime.fromtimestamp(row[2] / 1000.0, tz=timezone.utc),
-                timer_name=row[3]
+                fire_at=datetime.fromtimestamp(row[2] / 1000.0, tz=UTC),
+                timer_name=row[3],
             )
             for row in rows
         ]
 
-    async def claim_timer(
-        self,
-        flow_id: str,
-        step: int
-    ) -> bool:
+    async def claim_timer(self, flow_id: str, step: int) -> bool:
         """
         Claim an expired timer (optimistic concurrency).
 
@@ -892,16 +901,19 @@ class SqliteExecutionLog(ExecutionLog):
         self._check_connected()
 
         # Optimistic concurrency: only update if still waiting
-        cursor = await self._connection.execute("""
+        cursor = await self._connection.execute(
+            """
             UPDATE execution_log
             SET status = ?
             WHERE id = ? AND step = ? AND status = ?
-        """, (
-            InvocationStatus.COMPLETE.value,
-            flow_id,
-            step,
-            InvocationStatus.WAITING_FOR_TIMER.value
-        ))
+        """,
+            (
+                InvocationStatus.COMPLETE.value,
+                flow_id,
+                step,
+                InvocationStatus.WAITING_FOR_TIMER.value,
+            ),
+        )
 
         await self._connection.commit()
 
@@ -949,10 +961,7 @@ class SqliteExecutionLog(ExecutionLog):
             WHERE flow_id = ?
               AND status = 'SUSPENDED'
             """,
-            (
-                now_millis,
-                flow_id
-            )
+            (now_millis, flow_id),
         )
 
         await self._connection.commit()
@@ -993,13 +1002,13 @@ class SqliteExecutionLog(ExecutionLog):
             WHERE id = ?
             ORDER BY step ASC
             """,
-            (flow_id,)
+            (flow_id,),
         )
 
         rows = await cursor.fetchall()
         return [self._row_to_invocation(row) for row in rows]
 
-    async def get_next_timer_fire_time(self) -> Optional[datetime]:
+    async def get_next_timer_fire_time(self) -> datetime | None:
         """
         Get the earliest timer fire time across all flows.
 
@@ -1030,11 +1039,7 @@ class SqliteExecutionLog(ExecutionLog):
         return None
 
     async def store_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str,
-        result: bytes
+        self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
         """
         Store the result of a suspended invocation for later retrieval.
@@ -1062,17 +1067,14 @@ class SqliteExecutionLog(ExecutionLog):
             ON CONFLICT(flow_id, step, suspension_key)
             DO UPDATE SET result = excluded.result, created_at = excluded.created_at
             """,
-            (flow_id, step, suspension_key, result, now_millis)
+            (flow_id, step, suspension_key, result, now_millis),
         )
 
         await self._connection.commit()
 
     async def get_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> Optional[bytes]:
+        self, flow_id: str, step: int, suspension_key: str
+    ) -> bytes | None:
         """
         Get the stored result of a suspended invocation.
 
@@ -1094,7 +1096,7 @@ class SqliteExecutionLog(ExecutionLog):
             FROM suspension_params
             WHERE flow_id = ? AND step = ? AND suspension_key = ?
             """,
-            (flow_id, step, suspension_key)
+            (flow_id, step, suspension_key),
         )
 
         row = await cursor.fetchone()
@@ -1104,12 +1106,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         return None
 
-    async def remove_suspension_result(
-        self,
-        flow_id: str,
-        step: int,
-        suspension_key: str
-    ) -> None:
+    async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
         """
         Remove the stored result of a suspended invocation.
 
@@ -1127,18 +1124,12 @@ class SqliteExecutionLog(ExecutionLog):
             DELETE FROM suspension_params
             WHERE flow_id = ? AND step = ? AND suspension_key = ?
             """,
-            (flow_id, step, suspension_key)
+            (flow_id, step, suspension_key),
         )
 
         await self._connection.commit()
 
-
-    async def log_signal(
-        self,
-        flow_id: str,
-        step: int,
-        signal_name: str
-    ) -> None:
+    async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
         """
         Mark an invocation as waiting for an external signal.
 
@@ -1161,12 +1152,12 @@ class SqliteExecutionLog(ExecutionLog):
                 timer_name = ?
             WHERE id = ? AND step = ?
             """,
-            (signal_name, flow_id, step)
+            (signal_name, flow_id, step),
         )
 
         await self._connection.commit()
 
-    async def get_waiting_signals(self) -> List['SignalInfo']:
+    async def get_waiting_signals(self) -> list["SignalInfo"]:
         """
         Get all flows waiting for external signals.
 
@@ -1200,20 +1191,11 @@ class SqliteExecutionLog(ExecutionLog):
             flow_id = row[0]
             step = row[1]
             signal_name = row[2]  # timer_name is used for signal_name
-            signals.append(SignalInfo(
-                flow_id=flow_id,
-                step=step,
-                signal_name=signal_name
-            ))
+            signals.append(SignalInfo(flow_id=flow_id, step=step, signal_name=signal_name))
 
         return signals
 
-    async def update_is_retryable(
-        self,
-        flow_id: str,
-        step: int,
-        is_retryable: bool
-    ) -> None:
+    async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
         """
         Update the is_retryable flag for a specific step invocation.
 
@@ -1232,32 +1214,9 @@ class SqliteExecutionLog(ExecutionLog):
             SET is_retryable = ?
             WHERE id = ? AND step = ?
             """,
-            (1 if is_retryable else 0, flow_id, step)
+            (1 if is_retryable else 0, flow_id, step),
         )
         await self._connection.commit()
-
-    async def has_non_retryable_error(self, flow_id: str) -> bool:
-        """
-        Check if any step in the flow has a non-retryable error.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 531-548
-
-        Returns:
-            True if any step has is_retryable=0, False otherwise
-        """
-        self._check_connected()
-
-        cursor = await self._connection.execute(
-            """
-            SELECT EXISTS(
-                SELECT 1 FROM execution_log
-                WHERE id = ? AND is_retryable = 0
-            )
-            """,
-            (flow_id,)
-        )
-        row = await cursor.fetchone()
-        return bool(row[0]) if row else False
 
     # ========================================================================
     # Utility Operations
@@ -1348,9 +1307,7 @@ class SqliteExecutionLog(ExecutionLog):
         Check precondition at method start, not nested in try/catch.
         """
         if self._connection is None:
-            raise StorageError(
-                "Not connected. Call connect() first."
-            )
+            raise StorageError("Not connected. Call connect() first.")
 
     def _row_to_invocation(self, row: tuple) -> Invocation:
         """
@@ -1365,7 +1322,9 @@ class SqliteExecutionLog(ExecutionLog):
         """
         # Parse timestamp from milliseconds
         timestamp_ms = row[2]
-        timestamp = datetime.fromtimestamp(timestamp_ms / 1000.0) if timestamp_ms else datetime.now()
+        timestamp = (
+            datetime.fromtimestamp(timestamp_ms / 1000.0) if timestamp_ms else datetime.now()
+        )
 
         # Parse status string to enum (uppercase in DB, matching Rust)
         status_str = row[5]
@@ -1376,13 +1335,14 @@ class SqliteExecutionLog(ExecutionLog):
         retry_policy = None
         if retry_policy_json:
             import json
+
             try:
                 policy_dict = json.loads(retry_policy_json)
                 retry_policy = RetryPolicy(
-                    max_attempts=policy_dict.get('max_attempts', 3),
-                    initial_delay_ms=policy_dict.get('initial_delay_ms', 100),
-                    max_delay_ms=policy_dict.get('max_delay_ms', 10000),
-                    backoff_multiplier=policy_dict.get('backoff_multiplier', 2.0)
+                    max_attempts=policy_dict.get("max_attempts", 3),
+                    initial_delay_ms=policy_dict.get("initial_delay_ms", 100),
+                    max_delay_ms=policy_dict.get("max_delay_ms", 10000),
+                    backoff_multiplier=policy_dict.get("backoff_multiplier", 2.0),
                 )
             except:
                 pass
@@ -1393,7 +1353,9 @@ class SqliteExecutionLog(ExecutionLog):
 
         # Parse timer_fire_at from milliseconds
         timer_fire_at_ms = row[13]
-        timer_fire_at = datetime.fromtimestamp(timer_fire_at_ms / 1000.0) if timer_fire_at_ms else None
+        timer_fire_at = (
+            datetime.fromtimestamp(timer_fire_at_ms / 1000.0) if timer_fire_at_ms else None
+        )
 
         return Invocation(
             id=row[0],  # Flow execution ID
@@ -1412,5 +1374,5 @@ class SqliteExecutionLog(ExecutionLog):
             is_retryable=is_retryable,
             updated_at=timestamp,  # Use timestamp (no separate updated_at in DB)
             timer_fire_at=timer_fire_at,
-            timer_name=row[14]
+            timer_name=row[14],
         )

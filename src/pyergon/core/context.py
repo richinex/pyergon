@@ -26,7 +26,7 @@ so this is acceptable for implicit context tracking in async code.
 import pickle
 from contextvars import ContextVar
 from threading import Lock
-from typing import Any, Optional, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyergon.core.call_type import CallType
 from pyergon.core.invocation import Invocation
@@ -36,7 +36,7 @@ from pyergon.storage.base import ExecutionLog
 if TYPE_CHECKING:
     from pyergon.executor.outcome import SuspendReason
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 # =============================================================================
 # Sentinel Value for Cache Miss Detection
@@ -86,10 +86,7 @@ _CACHE_MISS = object()
 # Task-Local Context Variables
 # =============================================================================
 
-EXECUTION_CONTEXT: ContextVar[Optional['Context']] = ContextVar(
-    'execution_context',
-    default=None
-)
+EXECUTION_CONTEXT: ContextVar[Optional["Context"]] = ContextVar("execution_context", default=None)
 """
 Task-local Context.
 
@@ -112,10 +109,7 @@ Usage:
         EXECUTION_CONTEXT.reset(token)
 """
 
-CALL_TYPE: ContextVar[CallType] = ContextVar(
-    'call_type',
-    default=CallType.RUN
-)
+CALL_TYPE: ContextVar[CallType] = ContextVar("call_type", default=CallType.RUN)
 """
 Task-local call type (Run/Await/Resume).
 
@@ -141,6 +135,7 @@ Usage:
 # =============================================================================
 # Context - Flow Execution State
 # =============================================================================
+
 
 class Context:
     """
@@ -178,12 +173,7 @@ class Context:
             EXECUTION_CONTEXT.reset(token)
     """
 
-    def __init__(
-        self,
-        flow_id: str,
-        storage: ExecutionLog,
-        class_name: str = "Flow"
-    ):
+    def __init__(self, flow_id: str, storage: ExecutionLog, class_name: str = "Flow"):
         """
         Initialize Context.
 
@@ -212,7 +202,7 @@ class Context:
         # From Rust: suspend_reason: Mutex<Option<SuspendReason>>
         # Python equivalent: threading.Lock protecting Optional[SuspendReason]
         # Reference: https://docs.python.org/3/library/threading.html#lock-objects
-        self._suspend_reason: Optional['SuspendReason'] = None
+        self._suspend_reason: SuspendReason | None = None
         self._suspend_lock = Lock()
 
     def next_step(self) -> int:
@@ -276,7 +266,7 @@ class Context:
         """
         self._enclosing_step = step
 
-    def get_enclosing_step(self) -> Optional[int]:
+    def get_enclosing_step(self) -> int | None:
         """
         Get the current enclosing step, if any.
 
@@ -297,8 +287,8 @@ class Context:
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: Optional[int] = None,
-        retry_policy: Optional[Any] = None
+        delay: int | None = None,
+        retry_policy: Any | None = None,
     ) -> None:
         """
         Log step execution start to storage.
@@ -325,14 +315,11 @@ class Context:
             parameters=parameters,
             params_hash=params_hash,
             delay=delay,
-            retry_policy=retry_policy
+            retry_policy=retry_policy,
         )
 
     async def log_step_completion(
-        self,
-        step: int,
-        return_value: bytes,
-        is_retryable: Optional[bool] = None
+        self, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
         """
         Log step execution completion to storage.
@@ -351,27 +338,19 @@ class Context:
             Updated Invocation record
         """
         invocation = await self.storage.log_invocation_completion(
-            flow_id=self.flow_id,
-            step=step,
-            return_value=return_value
+            flow_id=self.flow_id, step=step, return_value=return_value
         )
 
         # Update is_retryable if specified (for error handling)
         if is_retryable is not None:
             await self.storage.update_is_retryable(
-                flow_id=self.flow_id,
-                step=step,
-                is_retryable=is_retryable
+                flow_id=self.flow_id, step=step, is_retryable=is_retryable
             )
 
         return invocation
 
     async def get_cached_result(
-        self,
-        step: int,
-        class_name: str,
-        method_name: str,
-        params_hash: int
+        self, step: int, class_name: str, method_name: str, params_hash: int
     ) -> Any:
         """
         Get cached result for a step if it exists.
@@ -397,10 +376,7 @@ class Context:
 
         Note: If result is a cached exception, it will be raised, not returned.
         """
-        invocation = await self.storage.get_invocation(
-            flow_id=self.flow_id,
-            step=step
-        )
+        invocation = await self.storage.get_invocation(flow_id=self.flow_id, step=step)
 
         if invocation is None:
             return _CACHE_MISS
@@ -435,11 +411,7 @@ class Context:
             # If deserialization fails, treat as no cache
             return _CACHE_MISS
 
-    async def update_step_retryability(
-        self,
-        step: int,
-        is_retryable: bool
-    ) -> None:
+    async def update_step_retryability(self, step: int, is_retryable: bool) -> None:
         """
         Update whether a step error is retryable.
 
@@ -453,9 +425,7 @@ class Context:
             is_retryable: Whether the error is retryable
         """
         await self.storage.update_is_retryable(
-            flow_id=self.flow_id,
-            step=step,
-            is_retryable=is_retryable
+            flow_id=self.flow_id, step=step, is_retryable=is_retryable
         )
 
     async def await_timer(self, step: int) -> None:
@@ -493,7 +463,7 @@ class Context:
     # SUSPENSION REASON MANAGEMENT
     # =========================================================================
 
-    def set_suspend_reason(self, reason: 'SuspendReason') -> None:
+    def set_suspend_reason(self, reason: "SuspendReason") -> None:
         """
         Set the suspension reason for this flow.
 
@@ -524,7 +494,7 @@ class Context:
         with self._suspend_lock:
             self._suspend_reason = reason
 
-    def take_suspend_reason(self) -> Optional['SuspendReason']:
+    def take_suspend_reason(self) -> Optional["SuspendReason"]:
         """
         Take and clear the suspension reason (consuming it atomically).
 
@@ -582,7 +552,7 @@ class Context:
         with self._suspend_lock:
             return self._suspend_reason is not None
 
-    def get_suspend_reason(self) -> Optional['SuspendReason']:
+    def get_suspend_reason(self) -> Optional["SuspendReason"]:
         """
         Get a copy of the suspension reason without clearing it.
 
@@ -603,17 +573,15 @@ class Context:
 
     def __repr__(self) -> str:
         """Readable representation for debugging."""
-        return (
-            f"Context(flow_id={self.flow_id!r}, "
-            f"step_counter={self._step_counter})"
-        )
+        return f"Context(flow_id={self.flow_id!r}, step_counter={self._step_counter})"
 
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
-def get_current_context() -> Optional[Context]:
+
+def get_current_context() -> Context | None:
     """
     Get the current Context from task-local storage.
 

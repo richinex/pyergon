@@ -17,25 +17,25 @@ By generating deterministic child UUIDs and using step caching,
 we eliminate race conditions and ensure exactly-once child execution.
 """
 
-import pickle
 import hashlib
-from typing import TypeVar, Generic
+import pickle
+from datetime import UTC, datetime
+from typing import Generic, TypeVar
 from uuid import UUID, uuid5
-from datetime import datetime, timezone
 
 from pyergon.core import (
-    get_current_context,
     InvocationStatus,
     ScheduledFlow,
     TaskStatus,
+    get_current_context,
 )
-from pyergon.executor.suspension_payload import SuspensionPayload
 from pyergon.executor.outcome import SuspendReason
+from pyergon.executor.suspension_payload import SuspensionPayload
 
 __all__ = ["PendingChild"]
 
 # Type variable for child flow output
-R = TypeVar('R')
+R = TypeVar("R")
 
 
 class PendingChild(Generic[R]):
@@ -172,11 +172,11 @@ class PendingChild(Generic[R]):
         #     (hasher.finish() & 0x7FFFFFFF) as i32
         # };
         hasher = hashlib.sha256()
-        hasher.update(self.child_type.encode('utf-8'))
+        hasher.update(self.child_type.encode("utf-8"))
         hasher.update(self.child_bytes)
         # Generate step as a 31-bit positive integer (matching Rust's i32 behavior)
         # Ensure it fits in SQLite INTEGER range
-        step = int(int.from_bytes(hasher.digest()[:4], byteorder='little') & 0x7FFFFFFF)
+        step = int(int.from_bytes(hasher.digest()[:4], byteorder="little") & 0x7FFFFFFF)
 
         # Log invocation start - this creates the invocation in storage
         # Required before await_external_signal can call log_signal
@@ -188,7 +188,7 @@ class PendingChild(Generic[R]):
             parameters=b"",  # No parameters for child invocation
             params_hash=0,  # No hash for empty parameters
             delay=None,
-            retry_policy=None
+            retry_policy=None,
         )
 
         # Generate deterministic child UUID based on parent + child_type + child_data_hash
@@ -201,7 +201,7 @@ class PendingChild(Generic[R]):
         # seed.extend_from_slice(&child_hash.to_le_bytes());
         # let child_flow_id = Uuid::new_v5(&parent_id, &seed);
         child_hash = hashlib.sha256(self.child_bytes).digest()
-        seed = self.child_type.encode('utf-8') + child_hash[:8]
+        seed = self.child_type.encode("utf-8") + child_hash[:8]
         child_flow_id = uuid5(parent_id, seed.hex())
         signal_name = str(child_flow_id)
 
@@ -232,7 +232,9 @@ class PendingChild(Generic[R]):
 
                         # Get retryability from payload (default to True if not set)
                         # **Rust Reference**: payload.is_retryable.unwrap_or(true)
-                        retryable = payload.is_retryable if payload.is_retryable is not None else True
+                        retryable = (
+                            payload.is_retryable if payload.is_retryable is not None else True
+                        )
 
                         # Raise ChildFlowError with retryability information preserved
                         raise ChildFlowError(type_name, message, retryable)
@@ -240,7 +242,9 @@ class PendingChild(Generic[R]):
             # Check if we're already waiting and signal has arrived
             # From Rust lines 189-226
             if existing_inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
-                params_bytes = await storage.get_suspension_result(str(parent_id), step, signal_name)
+                params_bytes = await storage.get_suspension_result(
+                    str(parent_id), step, signal_name
+                )
                 if params_bytes is not None:
                     payload: SuspensionPayload = pickle.loads(params_bytes)
                     # Complete invocation and clean up
@@ -264,7 +268,9 @@ class PendingChild(Generic[R]):
                             type_name, message = "unknown", error_msg
 
                         # Get retryability from payload (default to True if not set)
-                        retryable = payload.is_retryable if payload.is_retryable is not None else True
+                        retryable = (
+                            payload.is_retryable if payload.is_retryable is not None else True
+                        )
 
                         # Raise ChildFlowError with retryability information preserved
                         raise ChildFlowError(type_name, message, retryable)
@@ -286,7 +292,7 @@ class PendingChild(Generic[R]):
         if not child_already_scheduled:
             # Create ScheduledFlow with parent metadata
             # CRITICAL: parent_metadata enables complete_child_flow to signal parent
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             scheduled = ScheduledFlow(
                 task_id=str(child_flow_id),
                 flow_id=str(child_flow_id),
@@ -303,7 +309,7 @@ class PendingChild(Generic[R]):
                 # This is how the worker knows to call complete_child_flow with parent info
                 parent_metadata=(str(parent_id), str(child_flow_id)),
                 retry_policy=None,
-                version=None  # Child flows inherit parent's deployment, no separate version
+                version=None,  # Child flows inherit parent's deployment, no separate version
             )
 
             # Enqueue synchronously - must succeed before we wait
@@ -347,11 +353,7 @@ class PendingChild(Generic[R]):
 
         # Suspend - signal hasn't arrived yet
         # From Rust lines 313-324
-        reason = SuspendReason(
-            flow_id=parent_id,
-            step=step,
-            signal_name=signal_name
-        )
+        reason = SuspendReason(flow_id=parent_id, step=step, signal_name=signal_name)
         ctx.set_suspend_reason(reason)
 
         # In Rust, std::future::pending() returns Poll::Pending without completing.
@@ -363,6 +365,7 @@ class PendingChild(Generic[R]):
         # The executor will catch this exception and check ctx.take_suspend_reason()
         # to get the suspension details, then return Suspended(reason).
         from pyergon.executor.outcome import _SuspendExecution
+
         raise _SuspendExecution()
 
     def __repr__(self) -> str:

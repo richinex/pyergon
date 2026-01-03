@@ -97,6 +97,7 @@ async def main():
     async def step_b(inputs):
         a_value = inputs.get("a")
         import pickle
+
         a = pickle.loads(a_value) if a_value else 0
         print(f"   [b] Starting (depends on a={a})")
         await asyncio.sleep(0.05)
@@ -106,6 +107,7 @@ async def main():
     async def step_c(inputs):
         a_value = inputs.get("a")
         import pickle
+
         a = pickle.loads(a_value) if a_value else 0
         print(f"   [c] Starting (depends on a={a})")
         await asyncio.sleep(0.05)
@@ -114,6 +116,7 @@ async def main():
 
     async def step_d(inputs):
         import pickle
+
         b_value = inputs.get("b")
         c_value = inputs.get("c")
         b = pickle.loads(b_value) if b_value else 0
@@ -141,7 +144,7 @@ async def main():
     result_c = await h_c.resolve()
     result_d = await h_d.resolve()
 
-    print(f"   Results:")
+    print("   Results:")
     print(f"     a = {result_a}")
     print(f"     b = {result_b} (a + 1)")
     print(f"     c = {result_c} (a + 2)")
@@ -188,6 +191,7 @@ async def main():
 
     async def merge_d(inputs):
         import pickle
+
         a = pickle.loads(inputs["A"])
         b = pickle.loads(inputs["B"])
         c = pickle.loads(inputs["C"])
@@ -198,22 +202,23 @@ async def main():
 
     async def final_e(inputs):
         import pickle
+
         d = pickle.loads(inputs["D"])
         print(f"   [E] Starting (D={d})")
         await asyncio.sleep(0.02)
         print("   [E] Complete")
         return d * 10
 
-    hr = registry3.register("root", [], root)
-    ha = registry3.register("A", ["root"], branch_a)
-    hb = registry3.register("B", ["root"], branch_b)
-    hc = registry3.register("C", ["root"], branch_c)
-    hd = registry3.register("D", ["A", "B", "C"], merge_d)
+    registry3.register("root", [], root)
+    registry3.register("A", ["root"], branch_a)
+    registry3.register("B", ["root"], branch_b)
+    registry3.register("C", ["root"], branch_c)
+    registry3.register("D", ["A", "B", "C"], merge_d)
     he = registry3.register("E", ["D"], final_e)
 
     # Show summary
     summary = registry3.summary()
-    print(f"   DAG Summary:")
+    print("   DAG Summary:")
     print(f"     Total steps: {summary.total_steps}")
     print(f"     Root nodes: {summary.root_count} {summary.roots}")
     print(f"     Leaf nodes: {summary.leaf_count} {summary.leaves}")

@@ -40,7 +40,7 @@ __all__ = [
 ]
 
 # Type variable for flow result type
-R = TypeVar('R')
+R = TypeVar("R")
 
 
 class _SuspendExecution(Exception):
@@ -57,6 +57,7 @@ class _SuspendExecution(Exception):
     This is an internal control flow mechanism and should never be visible to
     user code - it's caught by the Executor before returning to the worker.
     """
+
     pass
 
 
@@ -259,6 +260,7 @@ FlowOutcome = Union[Completed[R], Suspended]
 # =============================================================================
 # TYPE GUARDS FOR FLOW OUTCOME
 # =============================================================================
+
 
 def is_completed(outcome: FlowOutcome[R]) -> bool:
     """

@@ -4,10 +4,12 @@ Tests for Phase 4 caching and storage integration.
 Tests result serialization, caching, and step persistence.
 """
 
-import pytest
-import pyergon
 import asyncio
 from dataclasses import dataclass
+
+import pytest
+
+import pyergon
 
 
 @dataclass
@@ -22,9 +24,9 @@ class CachingTestWorkflow:
     async def expensive_operation(self, value: int) -> int:
         """Simulate an expensive operation that should be cached."""
         # Track how many times this step executes
-        if 'expensive_operation' not in self.execution_count:
-            self.execution_count['expensive_operation'] = 0
-        self.execution_count['expensive_operation'] += 1
+        if "expensive_operation" not in self.execution_count:
+            self.execution_count["expensive_operation"] = 0
+        self.execution_count["expensive_operation"] += 1
 
         # Simulate expensive work
         await asyncio.sleep(0.01)
@@ -33,9 +35,9 @@ class CachingTestWorkflow:
     @pyergon.step
     async def another_step(self, value: int) -> int:
         """Another step for testing multiple step tracking."""
-        if 'another_step' not in self.execution_count:
-            self.execution_count['another_step'] = 0
-        self.execution_count['another_step'] += 1
+        if "another_step" not in self.execution_count:
+            self.execution_count["another_step"] = 0
+        self.execution_count["another_step"] += 1
 
         return value + 5
 
@@ -88,8 +90,8 @@ async def test_step_execution_tracking():
 
     # Each step should execute exactly once
     assert isinstance(outcome, pyergon.Completed)
-    assert workflow.execution_count['expensive_operation'] == 1
-    assert workflow.execution_count['another_step'] == 1
+    assert workflow.execution_count["expensive_operation"] == 1
+    assert workflow.execution_count["another_step"] == 1
 
 
 @pytest.mark.asyncio
@@ -151,12 +153,7 @@ async def test_complex_data_types():
     workflow = ComplexWorkflow()
 
     executor = pyergon.Executor(workflow, storage, "complex-data-test")
-    outcome = await executor.run(
-        lambda w: w.run(
-            {"name": "test", "value": 42},
-            [1, 2, 3]
-        )
-    )
+    outcome = await executor.run(lambda w: w.run({"name": "test", "value": 42}, [1, 2, 3]))
 
     assert isinstance(outcome, pyergon.Completed)
     processed_dict, processed_list = outcome.result
@@ -187,7 +184,9 @@ async def test_sqlite_persistence():
     assert len(invocations) == 3
 
     # Verify invocation details - find the expensive_operation step
-    expensive_inv = next((inv for inv in invocations if inv.method_name == "expensive_operation"), None)
+    expensive_inv = next(
+        (inv for inv in invocations if inv.method_name == "expensive_operation"), None
+    )
     assert expensive_inv is not None
     assert expensive_inv.class_name == "CachingTestWorkflow"
     assert expensive_inv.attempts == 1

@@ -9,48 +9,50 @@ These tests generate thousands of test cases to find edge cases in:
 - Retry policy calculations
 """
 
-import pytest
-import pickle
 import asyncio
-from hypothesis import given, strategies as st, assume, settings, HealthCheck
-from hypothesis import Phase
-from uuid import uuid4, UUID
-from datetime import datetime, timedelta
+import pickle
+from uuid import uuid4
+
+import pytest
+from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import strategies as st
 
 from pyergon.core import (
+    CallType,
     Invocation,
     InvocationStatus,
     RetryPolicy,
-    CallType,
 )
-from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 from pyergon.decorators import flow, flow_type, step
-from pyergon.executor import Executor, FlowOutcome, Completed, Suspended
-
+from pyergon.executor import Completed, Executor
+from pyergon.storage import InMemoryExecutionLog
 
 # ==============================================================================
 # PROPERTY 1: Serialization Roundtrip
 # ==============================================================================
+
 
 @pytest.mark.property
 @given(
     inv_id=st.uuids().map(str),
     flow_id=st.uuids().map(str),
     step=st.integers(min_value=0, max_value=10000),
-    class_name=st.text(min_size=1, max_size=50, alphabet=st.characters(
-        whitelist_categories=('Lu', 'Ll')
-    )),
-    method_name=st.text(min_size=1, max_size=50, alphabet=st.characters(
-        whitelist_categories=('Lu', 'Ll')
-    )),
+    class_name=st.text(
+        min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+    ),
+    method_name=st.text(
+        min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+    ),
     parameters=st.binary(min_size=0, max_size=1000),
     params_hash=st.integers(),
     # Only use statuses that don't require special fields
-    status=st.sampled_from([
-        InvocationStatus.PENDING,
-        InvocationStatus.COMPLETE,
-        InvocationStatus.WAITING_FOR_SIGNAL,
-    ]),
+    status=st.sampled_from(
+        [
+            InvocationStatus.PENDING,
+            InvocationStatus.COMPLETE,
+            InvocationStatus.WAITING_FOR_SIGNAL,
+        ]
+    ),
     attempts=st.integers(min_value=0, max_value=100),
 )
 def test_invocation_pickle_roundtrip(
@@ -95,9 +97,7 @@ def test_invocation_pickle_roundtrip(
 
 
 @pytest.mark.property
-@given(
-    value=st.integers() | st.text() | st.lists(st.integers())
-)
+@given(value=st.integers() | st.text() | st.lists(st.integers()))
 def test_flow_data_pickle_roundtrip(value):
     """
     Property: Flow instance data serialization preserves values.
@@ -124,6 +124,7 @@ def test_flow_data_pickle_roundtrip(value):
 # ==============================================================================
 # PROPERTY 2: Storage Operations
 # ==============================================================================
+
 
 @pytest.mark.property
 @pytest.mark.asyncio
@@ -216,6 +217,7 @@ async def test_storage_isolates_flows(num_flows, steps_per_flow):
 # PROPERTY 3: Retry Policy Calculations
 # ==============================================================================
 
+
 @pytest.mark.property
 @given(
     max_attempts=st.integers(min_value=1, max_value=100),
@@ -305,10 +307,15 @@ def test_retry_policy_max_attempts_respected(max_attempts, attempt_number):
 # PROPERTY 4: Step ID Stability
 # ==============================================================================
 
+
 @pytest.mark.property
 @given(
-    class_name=st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=('Lu', 'Ll'))),
-    method_name=st.text(min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=('Lu', 'Ll'))),
+    class_name=st.text(
+        min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+    ),
+    method_name=st.text(
+        min_size=1, max_size=50, alphabet=st.characters(whitelist_categories=("Lu", "Ll"))
+    ),
 )
 def test_step_id_deterministic(class_name, method_name):
     """
@@ -332,12 +339,15 @@ def test_step_id_deterministic(class_name, method_name):
 # PROPERTY 5: Flow Execution Idempotency
 # ==============================================================================
 
+
 @pytest.mark.property
 @pytest.mark.asyncio
 @given(
     initial_value=st.integers(min_value=-1000, max_value=1000),
 )
-@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 async def test_flow_execution_deterministic(initial_value, in_memory_storage):
     """
     Property: Same flow with same inputs produces same output.
@@ -384,6 +394,7 @@ async def test_flow_execution_deterministic(initial_value, in_memory_storage):
 # PROPERTY 6: Concurrent Operations Don't Corrupt State
 # ==============================================================================
 
+
 @pytest.mark.property
 @pytest.mark.asyncio
 @pytest.mark.concurrency
@@ -421,9 +432,7 @@ async def test_concurrent_storage_operations(num_concurrent, operations_per_task
         return task_id
 
     # Run concurrent writers
-    task_ids = await asyncio.gather(*[
-        writer_task(i) for i in range(num_concurrent)
-    ])
+    task_ids = await asyncio.gather(*[writer_task(i) for i in range(num_concurrent)])
 
     # Property: all tasks completed
     assert len(task_ids) == num_concurrent
@@ -442,6 +451,7 @@ async def test_concurrent_storage_operations(num_concurrent, operations_per_task
 # ==============================================================================
 # PROPERTY 7: CallType Transitions
 # ==============================================================================
+
 
 @pytest.mark.property
 @given(
@@ -463,14 +473,17 @@ def test_call_type_valid_values(call_type):
 # PROPERTY 8: InvocationStatus State Machine
 # ==============================================================================
 
+
 @pytest.mark.property
 @given(
-    status=st.sampled_from([
-        InvocationStatus.PENDING,
-        InvocationStatus.COMPLETE,
-        InvocationStatus.WAITING_FOR_SIGNAL,
-        InvocationStatus.WAITING_FOR_TIMER,
-    ]),
+    status=st.sampled_from(
+        [
+            InvocationStatus.PENDING,
+            InvocationStatus.COMPLETE,
+            InvocationStatus.WAITING_FOR_SIGNAL,
+            InvocationStatus.WAITING_FOR_TIMER,
+        ]
+    ),
 )
 def test_invocation_status_serialization(status):
     """

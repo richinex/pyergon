@@ -15,18 +15,17 @@ ARCHITECTURE VERIFICATION:
 
 import asyncio
 import sys
-from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pyergon.core import get_current_call_type, CallType
-from pyergon.storage import InMemoryExecutionLog
+from pyergon.core import CallType, get_current_call_type
+from pyergon.decorators import flow, step
 from pyergon.executor import Executor
 from pyergon.executor.signal import await_external_signal, signal_resume
-from pyergon.decorators import flow, step
+from pyergon.storage import InMemoryExecutionLog
 
 
 @flow
@@ -45,7 +44,7 @@ class EmailConfirmationFlow:
         return f"confirmation-link-{self.email}"
 
     @step
-    async def wait_for_confirmation(self, sent_at: datetime) -> Optional[datetime]:
+    async def wait_for_confirmation(self, sent_at: datetime) -> datetime | None:
         """
         Wait for user to click confirmation link.
 
@@ -77,14 +76,12 @@ class EmailConfirmationFlow:
     async def run(self) -> str:
         """Main flow logic."""
         # Send email
-        link = await self.send_confirmation_email()
+        await self.send_confirmation_email()
         sent_at = datetime.now()
 
         # Wait for external confirmation
-        print(f"[run] About to await external signal...")
-        confirmed_at = await await_external_signal(
-            lambda: self.wait_for_confirmation(sent_at)
-        )
+        print("[run] About to await external signal...")
+        confirmed_at = await await_external_signal(lambda: self.wait_for_confirmation(sent_at))
         print(f"[run] Signal received! Confirmed at {confirmed_at}")
 
         # Activate account
@@ -140,7 +137,7 @@ async def main():
         print()
         print(f"   Result: {result}")
         print()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print()
         print("   ERROR: Flow did not complete within timeout")
         print()
