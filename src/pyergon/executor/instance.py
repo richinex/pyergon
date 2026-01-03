@@ -4,7 +4,8 @@ Executor - Direct flow execution.
 This module provides Executor for running flows directly without a queue.
 For distributed execution, use Scheduler + Worker instead.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/instance.rs`
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/instance.rs`
 
 RUST COMPLIANCE: Matches Rust ergon src/executor/instance.rs + executor.rs
 Simplified from FlowInstance + FlowExecutor into single Executor type.
@@ -29,7 +30,12 @@ from pyergon.core import (
     CallType,
     Context,
 )
-from pyergon.executor.outcome import Completed, FlowOutcome, Suspended, _SuspendExecution
+from pyergon.executor.outcome import (
+    Completed,
+    FlowOutcome,
+    Suspended,
+    _SuspendExecutionError,
+)
 from pyergon.storage.base import ExecutionLog
 
 T = TypeVar("T")  # Flow type
@@ -191,7 +197,7 @@ class Executor(Generic[T]):
                 )
                 return Completed(result=result)
 
-        except _SuspendExecution:
+        except _SuspendExecutionError:
             # Flow suspended via exception (Python-specific mechanism)
             # This is raised by pending_child.result() or pending_timer.wait()
             # when the flow needs to suspend.
@@ -200,7 +206,9 @@ class Executor(Generic[T]):
             # In Python, we use this exception as a control flow mechanism.
             suspend_reason = ctx.take_suspend_reason()
             if suspend_reason is None:
-                raise RuntimeError("_SuspendExecution raised but no suspend_reason set in context")
+                raise RuntimeError(
+                    "_SuspendExecutionError raised but no suspend_reason set in context"
+                )
             return Suspended(reason=suspend_reason)
 
         except Exception as e:

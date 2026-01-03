@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TypeVar
 
-from pyergon.core.retry import RetryPolicy
-from pyergon.core.status import InvocationStatus
+from pyergon.models.retry import RetryPolicy
+from pyergon.models.status import InvocationStatus
 
 T = TypeVar("T")
 
@@ -303,7 +303,9 @@ class Invocation:
     def deserialize_return_value(self, type_: type[T]) -> T | None:
         """Deserialize return value to the specified type.
 
-        Rust: pub fn deserialize_return_value<T: for<'de> Deserialize<'de>>(&self) -> Result<Option<T>>
+        Rust: pub fn deserialize_return_value<T: for<'de> Deserialize<'de>>(
+            &self
+        ) -> Result<Option<T>>
 
         Args:
             type_: Target type (used for type hint only, not enforced)

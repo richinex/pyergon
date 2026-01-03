@@ -21,14 +21,21 @@ Like the GameData interface in attendance_report_v2.py, this defines
 what operations clients need without specifying implementation details.
 """
 
+from __future__ import annotations
+
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from pyergon.core import Invocation, RetryPolicy, ScheduledFlow, TaskStatus
-from pyergon.core.timer_info import TimerInfo
+from pyergon.models import (
+    Invocation,
+    RetryPolicy,
+    ScheduledFlow,
+    TaskStatus,
+    TimerInfo,
+)
 
 
 @dataclass
@@ -91,7 +98,7 @@ class ExecutionLog(ABC):
         parameters: bytes,
         params_hash: int,
         delay: int | None = None,
-        retry_policy: Optional["RetryPolicy"] = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """
         Record the start of a step execution.
@@ -268,7 +275,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def retry_flow(self, task_id: str, error_message: str, delay: "timedelta") -> None:
+    async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
         """
         Reschedule a failed flow for retry after a delay.
 
@@ -335,7 +342,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
+    async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
         """
         Get all timers that have expired.
 
@@ -573,7 +580,7 @@ class ExecutionLog(ABC):
         pass
 
     @abstractmethod
-    async def get_invocations_for_flow(self, flow_id: str) -> list["Invocation"]:
+    async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
         """
         Get all invocations (steps) for a specific flow.
 

@@ -1,7 +1,8 @@
 """
 SuspensionPayload - Data structure for suspension resolution.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/child_flow.rs` lines 42-62
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/child_flow.rs` lines 42-62
 
 This module provides SuspensionPayload, which carries the result of a suspension
 (timer or signal) back to the suspended flow.

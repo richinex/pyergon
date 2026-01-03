@@ -10,7 +10,7 @@ RUST COMPLIANCE: Matches Rust ergon src/storage/queue.rs types
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from pyergon.core.status import TaskStatus
+from pyergon.models.status import TaskStatus
 
 
 @dataclass

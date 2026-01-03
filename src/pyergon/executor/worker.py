@@ -78,7 +78,8 @@ class Registry(Generic[S]):
         **Rust Reference**: lines 222-227
         """
         # Maps flow_type_id -> executor function
-        # Executor signature: (flow_data: bytes, flow_id: UUID, storage: S, parent_metadata: Optional[tuple]) -> FlowOutcome
+        # Executor signature: (flow_data: bytes, flow_id: UUID, storage: S,
+        #                      parent_metadata: Optional[tuple]) -> FlowOutcome
         self._executors: dict[str, Callable] = {}
 
     def register(self, flow_class: type, executor: Callable[[Any], Awaitable[Any]]) -> None:
@@ -619,11 +620,13 @@ class Worker:
 
                         if resumed:
                             logger.debug(
-                                f"Signal '{signal_info.signal_name}' delivered to flow {signal_info.flow_id}"
+                                f"Signal '{signal_info.signal_name}' delivered to "
+                                f"flow {signal_info.flow_id}"
                             )
                         else:
                             logger.debug(
-                                f"Signal '{signal_info.signal_name}' stored for flow {signal_info.flow_id} "
+                                f"Signal '{signal_info.signal_name}' stored for "
+                                f"flow {signal_info.flow_id} "
                                 "(will resume when suspended)"
                             )
 
@@ -676,7 +679,8 @@ class Worker:
                             # Clear the event after waking up so we wait again next time
                             self._work_notify.clear()
                             logger.debug(
-                                f"Worker {self._worker_id}: Woke from notification, retrying dequeue"
+                                f"Worker {self._worker_id}: "
+                                "Woke from notification, retrying dequeue"
                             )
                             # Loop back and try to dequeue again immediately!
                             continue

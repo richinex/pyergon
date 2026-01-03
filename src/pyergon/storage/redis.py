@@ -36,10 +36,11 @@ From Dave Cheney:
 - Return early pattern (guard clauses for existence checks)
 """
 
+from __future__ import annotations
+
 import asyncio
 import pickle
 from datetime import UTC, datetime
-from typing import Optional
 
 from uuid_extensions import uuid7
 
@@ -48,14 +49,14 @@ try:
 except ImportError:
     raise ImportError("redis-py is required for RedisExecutionLog. Install with: pip install redis")
 
-from pyergon.core import (
+from pyergon.models import (
     Invocation,
     InvocationStatus,
     RetryPolicy,
     ScheduledFlow,
     TaskStatus,
+    TimerInfo,
 )
-from pyergon.core.timer_info import TimerInfo
 from pyergon.storage.base import ExecutionLog, StorageError
 
 
@@ -172,7 +173,7 @@ class RedisExecutionLog(ExecutionLog):
         parameters: bytes,
         params_hash: int,
         delay: int | None = None,
-        retry_policy: Optional["RetryPolicy"] = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """
         Log the start of a step invocation.
@@ -607,7 +608,7 @@ class RedisExecutionLog(ExecutionLog):
         self._timer_notify.set()
         self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
+    async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
         """
         Get all timers that have expired.
 
@@ -615,7 +616,6 @@ class RedisExecutionLog(ExecutionLog):
 
         Returns TimerInfo objects with flow_id, step, fire_at, and timer_name.
         """
-        from pyergon.core import TimerInfo
 
         self._check_connected()
 

@@ -1,7 +1,8 @@
 """
 Flow execution outcome handling.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs`
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs`
 
 This module hides the design decisions around:
 - Retry policies and when to retry failed flows
@@ -226,7 +227,8 @@ async def handle_suspended_flow(
     # From Rust lines 290-347
     # This handles a race condition with multiple workers:
     # - Worker A: Parent suspends (RUNNING)
-    # - Worker B: Child completes/timer fires, calls resume_flow() → returns False (parent still RUNNING)
+    # - Worker B: Child completes/timer fires, calls resume_flow()
+    #   → returns False (parent still RUNNING)
     # - Worker A: Marks parent SUSPENDED
     # - Need to check for pending signals/timers and resume immediately
     try:
@@ -290,7 +292,8 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
             return None
         else:
             logger.debug(
-                f"Flow {flow.flow_id} has no non-retryable errors - continuing to retry policy check"
+                f"Flow {flow.flow_id} has no non-retryable errors - "
+                "continuing to retry policy check"
             )
     except Exception as e:
         logger.warning(f"Failed to check for non-retryable errors for flow {flow.flow_id}: {e}")
@@ -328,7 +331,8 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
     # From Rust lines 217-220: if attempt >= max_attempts, no more retries
     if next_attempt >= policy.max_attempts:
         logger.debug(
-            f"Flow {flow.flow_id} exceeded max retry attempts ({next_attempt}/{policy.max_attempts})"
+            f"Flow {flow.flow_id} exceeded max retry attempts "
+            f"({next_attempt}/{policy.max_attempts})"
         )
         return None
 
@@ -346,7 +350,9 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
     delay_seconds = min(delay_seconds, max_delay)
 
     logger.debug(
-        f"Flow {flow.flow_id} will retry (attempt {next_attempt}/{policy.max_attempts}) after {delay_seconds:.2f}s"
+        f"Flow {flow.flow_id} will retry "
+        f"(attempt {next_attempt}/{policy.max_attempts}) "
+        f"after {delay_seconds:.2f}s"
     )
 
     return timedelta(seconds=delay_seconds)

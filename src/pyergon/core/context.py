@@ -29,7 +29,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyergon.core.call_type import CallType
-from pyergon.core.invocation import Invocation
+from pyergon.models import Invocation
 from pyergon.storage.base import ExecutionLog
 
 # Avoid circular import for type checking
@@ -327,7 +327,9 @@ class Context:
         Updates Invocation record with status=COMPLETE and return_value.
 
         From Rust:
-            pub async fn log_step_completion(&self, step: i32, return_value: &[u8]) -> Result<Invocation>
+            pub async fn log_step_completion(
+                &self, step: i32, return_value: &[u8]
+            ) -> Result<Invocation>
 
         Args:
             step: Step number

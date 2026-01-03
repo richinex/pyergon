@@ -10,19 +10,21 @@ From Dave Cheney:
 "Make the zero value useful" - Instance is immediately usable after __init__.
 """
 
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timedelta
 
 from uuid_extensions import uuid7
 
-from pyergon.core import (
+from pyergon.models import (
     Invocation,
     InvocationStatus,
     RetryPolicy,
     ScheduledFlow,
     TaskStatus,
+    TimerInfo,
 )
-from pyergon.core.timer_info import TimerInfo
 from pyergon.storage.base import ExecutionLog, StorageError
 
 
@@ -100,7 +102,8 @@ class InMemoryExecutionLog(ExecutionLog):
         async with self._lock:
             key = (flow_id, step)
 
-            # Check if invocation already exists and skip if Complete, WaitingForSignal, or WaitingForTimer
+            # Check if invocation already exists and skip if Complete,
+            # WaitingForSignal, or WaitingForTimer
             # From Rust lines 123-130
             if key in self._invocations:
                 existing = self._invocations[key]
@@ -444,13 +447,12 @@ class InMemoryExecutionLog(ExecutionLog):
                 self._timer_notify.set()
                 self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
+    async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
         """
         Get all timers that have expired.
 
         **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
         """
-        from pyergon.core import TimerInfo
 
         async with self._lock:
             expired = []

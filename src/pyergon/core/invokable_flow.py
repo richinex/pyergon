@@ -1,7 +1,9 @@
 """
 InvokableFlow protocol for child flow invocation.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/core/flow_type.rs` lines 103-137
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/core/flow_type.rs`
+lines 103-137
 
 This module provides the InvokableFlow protocol which extends FlowType
 with an Output type for type-safe parent-child invocation.

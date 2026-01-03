@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from pyergon.core import CallType, get_current_context
-from pyergon.core.status import InvocationStatus
+from pyergon.models import InvocationStatus
 
 # Global state for signal coordination
 # These are module-level to ensure visibility across all flow executions
@@ -96,11 +96,11 @@ async def await_external_signal(signal_name: str) -> bytes:
     await ctx.storage.log_signal(ctx.flow_id, current_step, signal_name)
 
     # Suspend execution
-    from pyergon.executor.outcome import SuspendReason, _SuspendExecution
+    from pyergon.executor.outcome import SuspendReason, _SuspendExecutionError
 
     reason = SuspendReason(flow_id=ctx.flow_id, step=current_step, signal_name=signal_name)
     ctx.set_suspend_reason(reason)
-    raise _SuspendExecution()
+    raise _SuspendExecutionError()
 
 
 async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R | None]]) -> R:

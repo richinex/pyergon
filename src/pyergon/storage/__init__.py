@@ -20,9 +20,28 @@ from pyergon.storage.base import (
     TimerNotificationSource,
     WorkNotificationSource,
 )
-from pyergon.storage.memory import InMemoryExecutionLog
-from pyergon.storage.redis import RedisExecutionLog
-from pyergon.storage.sqlite import SqliteExecutionLog
+
+# Lazy imports to avoid circular dependency:
+# pyergon.core.context imports from pyergon.storage.base, so we can't
+# import storage implementations here (they import from pyergon.core)
+
+
+def __getattr__(name: str):
+    """Lazy import storage implementations to avoid circular imports."""
+    if name == "InMemoryExecutionLog":
+        from pyergon.storage.memory import InMemoryExecutionLog
+
+        return InMemoryExecutionLog
+    elif name == "RedisExecutionLog":
+        from pyergon.storage.redis import RedisExecutionLog
+
+        return RedisExecutionLog
+    elif name == "SqliteExecutionLog":
+        from pyergon.storage.sqlite import SqliteExecutionLog
+
+        return SqliteExecutionLog
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ExecutionLog",

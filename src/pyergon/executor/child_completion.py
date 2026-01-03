@@ -1,7 +1,9 @@
 """
 Child flow completion signaling.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs` lines 34-194
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs`
+lines 34-194
 
 This module provides automatic parent signaling when child flows complete.
 

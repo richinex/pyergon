@@ -3,7 +3,8 @@ Flow execution outcomes and suspension reasons.
 
 This module defines the FlowOutcome state machine for flow execution results.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/error.rs` lines 69-92
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/error.rs` lines 69-92
 
 **Python Documentation**:
 - Dataclasses: https://docs.python.org/3/library/dataclasses.html
@@ -28,7 +29,7 @@ Example:
 """
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar, Union
+from typing import Generic, TypeVar
 from uuid import UUID
 
 __all__ = [
@@ -43,7 +44,7 @@ __all__ = [
 R = TypeVar("R")
 
 
-class _SuspendExecutionErrorError(Exception):
+class _SuspendExecutionError(Exception):
     """
     Internal exception used to signal flow suspension.
 

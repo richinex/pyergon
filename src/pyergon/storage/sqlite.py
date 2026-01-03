@@ -19,23 +19,23 @@ Implementation follows Rust ergon's sqlite.rs with Python idioms:
 - Indexes on (status, created_at) for efficient queue queries
 """
 
+from __future__ import annotations
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import aiosqlite
 
-from pyergon.core import (
+from pyergon.models import (
     Invocation,
     InvocationStatus,
     RetryPolicy,
     ScheduledFlow,
     TaskStatus,
+    TimerInfo,
 )
-from pyergon.core.timer_info import TimerInfo
-from pyergon.executor.signal import SignalInfo
-from pyergon.storage.base import ExecutionLog, StorageError
+from pyergon.storage.base import ExecutionLog, SignalInfo, StorageError
 
 
 class SqliteExecutionLog(ExecutionLog):
@@ -83,7 +83,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._status_notify = asyncio.Event()
 
     @classmethod
-    async def in_memory(cls) -> "SqliteExecutionLog":
+    async def in_memory(cls) -> SqliteExecutionLog:
         """
         Create an in-memory SQLite storage for testing.
 
@@ -188,7 +188,9 @@ class SqliteExecutionLog(ExecutionLog):
                 class_name TEXT NOT NULL,
                 method_name TEXT NOT NULL,
                 delay INTEGER,
-                status TEXT CHECK( status IN ('PENDING','WAITING_FOR_SIGNAL','WAITING_FOR_TIMER','COMPLETE') ) NOT NULL,
+                status TEXT CHECK( status IN (
+                    'PENDING','WAITING_FOR_SIGNAL','WAITING_FOR_TIMER','COMPLETE'
+                ) ) NOT NULL,
                 attempts INTEGER NOT NULL DEFAULT 1,
                 parameters BLOB,
                 params_hash INTEGER NOT NULL DEFAULT 0,
@@ -230,7 +232,9 @@ class SqliteExecutionLog(ExecutionLog):
                 flow_id TEXT NOT NULL,
                 flow_type TEXT NOT NULL,
                 flow_data BLOB NOT NULL,
-                status TEXT CHECK( status IN ('PENDING','RUNNING','SUSPENDED','COMPLETE','FAILED') ) NOT NULL,
+                status TEXT CHECK( status IN (
+                    'PENDING','RUNNING','SUSPENDED','COMPLETE','FAILED'
+                ) ) NOT NULL,
                 parent_flow_id TEXT,
                 signal_token TEXT,
                 locked_by TEXT,
@@ -283,7 +287,7 @@ class SqliteExecutionLog(ExecutionLog):
         parameters: bytes,
         params_hash: int,
         delay: int | None = None,
-        retry_policy: Optional["RetryPolicy"] = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """
         Record the start of a step execution.
@@ -844,7 +848,7 @@ class SqliteExecutionLog(ExecutionLog):
         self._timer_notify.set()
         self._timer_notify.clear()  # Reset for next notification
 
-    async def get_expired_timers(self, now: datetime) -> list["TimerInfo"]:
+    async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
         """
         Get all timers that have expired.
 
@@ -867,7 +871,6 @@ class SqliteExecutionLog(ExecutionLog):
 
         rows = await cursor.fetchall()
 
-        from pyergon.core import TimerInfo
 
         return [
             TimerInfo(
@@ -1157,7 +1160,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-    async def get_waiting_signals(self) -> list["SignalInfo"]:
+    async def get_waiting_signals(self) -> list[SignalInfo]:
         """
         Get all flows waiting for external signals.
 
@@ -1170,7 +1173,6 @@ class SqliteExecutionLog(ExecutionLog):
         Returns:
             List of SignalInfo with flow_id, step, signal_name
         """
-        from pyergon.storage.base import SignalInfo
 
         self._check_connected()
 
@@ -1344,7 +1346,7 @@ class SqliteExecutionLog(ExecutionLog):
                     max_delay_ms=policy_dict.get("max_delay_ms", 10000),
                     backoff_multiplier=policy_dict.get("backoff_multiplier", 2.0),
                 )
-            except:
+            except (json.JSONDecodeError, TypeError, KeyError, ValueError):
                 pass
 
         # Parse is_retryable (0/1/NULL -> False/True/None)

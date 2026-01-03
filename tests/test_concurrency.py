@@ -110,8 +110,8 @@ async def test_concurrent_storage_writes_no_corruption(in_memory_storage):
 
             await in_memory_storage.log_invocation_completion(
                 flow_id=flow_id,
-                step=step,
-                return_value=pickle.dumps(f"result_{writer_id}_{step}"),
+                step=step_num,
+                return_value=pickle.dumps(f"result_{writer_id}_{step_num}"),
             )
 
     # Run all writers concurrently

@@ -8,10 +8,12 @@ import asyncio
 import shutil
 import tempfile
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from hypothesis import strategies as st
 
 from pyergon.core import Invocation, InvocationStatus
 from pyergon.decorators import flow, flow_type, step
@@ -69,8 +71,6 @@ def random_flow_id() -> str:
 
 
 # Sample test flows for reuse across tests
-
-from dataclasses import dataclass
 
 
 @dataclass
@@ -162,8 +162,6 @@ def flaky_flow() -> FlakyTestFlow:
 
 
 # Hypothesis strategies for property-based testing
-
-from hypothesis import strategies as st
 
 
 @st.composite

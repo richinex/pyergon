@@ -1,7 +1,8 @@
 """
 PendingChild - Handle for awaiting child flow completion.
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/child_flow.rs` lines 64-326
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/child_flow.rs` lines 64-326
 
 This module provides PendingChild, which is returned from flow.invoke() and
 provides a .result() method to await the child's completion.
@@ -359,14 +360,14 @@ class PendingChild(Generic[R]):
         # In Rust, std::future::pending() returns Poll::Pending without completing.
         # Python doesn't have this mechanism - async functions must complete or raise.
         #
-        # Solution: Raise a special _SuspendExecution exception that the Executor catches.
+        # Solution: Raise a special _SuspendExecutionError exception that the Executor catches.
         # This is an internal control flow mechanism, not a user-visible error.
         #
         # The executor will catch this exception and check ctx.take_suspend_reason()
         # to get the suspension details, then return Suspended(reason).
-        from pyergon.executor.outcome import _SuspendExecution
+        from pyergon.executor.outcome import _SuspendExecutionError
 
-        raise _SuspendExecution()
+        raise _SuspendExecutionError()
 
     def __repr__(self) -> str:
         """Readable representation for debugging."""
