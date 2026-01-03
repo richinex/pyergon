@@ -134,7 +134,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
 
     Raises:
         TimerError: If called outside a flow context
-        _SuspendExecutionError: Internal exception to signal flow suspension
+        _SuspendExecution: Internal exception to signal flow suspension
 
     Example:
         @step
@@ -142,7 +142,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             await schedule_timer_named(3.0, "warehouse-processing")
             print("Warehouse processing complete")
     """
-    from pyergon.executor.outcome import SuspendReason, _SuspendExecutionError
+    from pyergon.executor.outcome import SuspendReason, _SuspendExecution
     from pyergon.models import InvocationStatus
 
     # Get current flow context
@@ -203,7 +203,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
 
             # Raise exception to signal suspension
             # This is caught by Executor which checks ctx.take_suspend_reason()
-            raise _SuspendExecutionError()
+            raise _SuspendExecution()
 
     # First time - calculate fire time and log timer
     # **Rust Reference**: lines 271-278
@@ -220,10 +220,10 @@ async def schedule_timer_named(duration: float, name: str) -> None:
     )
     ctx.set_suspend_reason(reason)
 
-    # Suspension is control flow, not an error. Raise _SuspendExecutionError.
+    # Suspension is control flow, not an error. Raise _SuspendExecution.
     # Executor will catch this and check ctx.take_suspend_reason()
     # **Rust Reference**: line 267 (std::future::pending().await)
-    raise _SuspendExecutionError()
+    raise _SuspendExecution()
 
 
 # ========================================================================

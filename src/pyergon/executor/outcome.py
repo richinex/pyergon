@@ -37,26 +37,57 @@ __all__ = [
     "Completed",
     "Suspended",
     "FlowOutcome",
-    "_SuspendExecutionError",
+    "_SuspendExecution",
 ]
 
 # Type variable for flow result type
 R = TypeVar("R")
 
 
-class _SuspendExecutionError(Exception):
-    """
-    Internal exception used to signal flow suspension.
+# =============================================================================
+# Flow Control Signals (Not Errors)
+# =============================================================================
 
-    **Python-specific workaround**: In Rust, futures can return Poll::Pending
+
+class _FlowControl(BaseException):
+    """
+    Base class for flow control signals.
+
+    Like Python's StopIteration and GeneratorExit, these are control flow
+    mechanisms, not errors. They inherit from BaseException (not Exception)
+    to ensure they're not accidentally caught by generic exception handlers.
+
+    **Design Rationale**:
+    - Inheriting from BaseException prevents accidental catching by `except Exception:`
+    - Makes it explicit that these are control flow, not error conditions
+    - Follows Python's precedent for control flow exceptions
+
+    **Reference**: PEP 352 - Required Superclass for Exceptions
+    https://www.python.org/dev/peps/pep-0352/
+    """
+
+    pass
+
+
+class _SuspendExecution(_FlowControl):  # noqa: N818
+    """
+    Signal that flow execution should suspend (not an error).
+
+    **Python-specific pattern**: In Rust, futures can return Poll::Pending
     without completing. In Python, async functions must complete or raise.
 
-    This exception is raised by pending_child.result() and pending_timer.wait()
-    to signal that the flow should suspend. The Executor catches this exception
-    and checks ctx.take_suspend_reason() to get suspension details.
+    This signal is raised by schedule_timer(), await_external_signal(), and
+    pending_child.result() to indicate the flow should suspend. The Executor
+    catches this and checks ctx.take_suspend_reason() for suspension details.
 
-    This is an internal control flow mechanism and should never be visible to
-    user code - it's caught by the Executor before returning to the worker.
+    **Not an Error**: This is control flow, like StopIteration. The noqa comment
+    suppresses N818 (exceptions should end with Error) because this is intentionally
+    not an error - it's a control flow signal.
+
+    **Visibility**: Internal mechanism, never visible to user code - caught by
+    the Executor before returning to the worker.
+
+    **Rust Equivalent**: Poll::Pending in async fn
     """
 
     pass

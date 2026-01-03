@@ -96,11 +96,11 @@ async def await_external_signal(signal_name: str) -> bytes:
     await ctx.storage.log_signal(ctx.flow_id, current_step, signal_name)
 
     # Suspend execution
-    from pyergon.executor.outcome import SuspendReason, _SuspendExecutionError
+    from pyergon.executor.outcome import SuspendReason, _SuspendExecution
 
     reason = SuspendReason(flow_id=ctx.flow_id, step=current_step, signal_name=signal_name)
     ctx.set_suspend_reason(reason)
-    raise _SuspendExecutionError()
+    raise _SuspendExecution()
 
 
 async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R | None]]) -> R:

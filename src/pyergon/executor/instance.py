@@ -34,7 +34,7 @@ from pyergon.executor.outcome import (
     Completed,
     FlowOutcome,
     Suspended,
-    _SuspendExecutionError,
+    _SuspendExecution,
 )
 from pyergon.storage.base import ExecutionLog
 
@@ -197,7 +197,7 @@ class Executor(Generic[T]):
                 )
                 return Completed(result=result)
 
-        except _SuspendExecutionError:
+        except _SuspendExecution:
             # Flow suspended via exception (Python-specific mechanism)
             # This is raised by pending_child.result() or pending_timer.wait()
             # when the flow needs to suspend.
@@ -207,7 +207,7 @@ class Executor(Generic[T]):
             suspend_reason = ctx.take_suspend_reason()
             if suspend_reason is None:
                 raise RuntimeError(
-                    "_SuspendExecutionError raised but no suspend_reason set in context"
+                    "_SuspendExecution raised but no suspend_reason set in context"
                 )
             return Suspended(reason=suspend_reason)
 
