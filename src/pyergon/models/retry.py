@@ -99,7 +99,7 @@ class RetryPolicy:
         AGGRESSIVE = cast("RetryPolicy", None)
 
     @classmethod
-    def with_max_attempts(cls, max_attempts: int) -> "RetryPolicy":
+    def with_max_attempts(cls, max_attempts: int) -> RetryPolicy:
         """
         Create a policy with custom max_attempts (uses standard delays).
 
