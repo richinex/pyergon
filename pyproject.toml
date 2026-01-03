@@ -83,3 +83,8 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.36.2",
+]

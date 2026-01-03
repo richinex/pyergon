@@ -13,7 +13,10 @@ Design Rationale (from Rust version):
 - Advanced control: Custom RetryPolicy for full control
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
 
 @dataclass(frozen=True)
@@ -84,14 +87,16 @@ class RetryPolicy:
     # Predefined Policies
     # =========================================================================
 
-    # No retries - fail immediately on first error
-    NONE: "RetryPolicy" = None  # Set after class definition
-
-    # Standard retry policy - sensible defaults for most use cases
-    STANDARD: "RetryPolicy" = None  # Set after class definition
-
-    # Aggressive retry policy for critical operations
-    AGGRESSIVE: "RetryPolicy" = None  # Set after class definition
+    if TYPE_CHECKING:
+        # Type checker sees these as RetryPolicy
+        NONE: RetryPolicy
+        STANDARD: RetryPolicy
+        AGGRESSIVE: RetryPolicy
+    else:
+        # Runtime sees these as None (set after class definition)
+        NONE = cast("RetryPolicy", None)
+        STANDARD = cast("RetryPolicy", None)
+        AGGRESSIVE = cast("RetryPolicy", None)
 
     @classmethod
     def with_max_attempts(cls, max_attempts: int) -> "RetryPolicy":
