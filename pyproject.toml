@@ -49,13 +49,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-timeout = 30
-timeout_method = "thread"
 addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
-    "--timeout=30",
 ]
 markers = [
     "asyncio: async tests",

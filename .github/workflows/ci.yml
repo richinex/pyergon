@@ -66,12 +66,10 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run tests
-        run: |
-          uv run pytest -v
-          echo "✓ Tests completed successfully"
+        run: uv run pytest -v -p no:timeout
         env:
           PYTHONPATH: src
-        timeout-minutes: 3
+        timeout-minutes: 2
 
   build:
     name: Build Package
