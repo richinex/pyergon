@@ -67,7 +67,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest -v --cov=src/pyergon --cov-report=term-missing --tb=short
+          uv run pytest --cov=src/pyergon --cov-report=term
           echo "✓ Tests completed successfully"
         env:
           PYTHONPATH: src
