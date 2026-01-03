@@ -36,14 +36,14 @@ __all__ = [
     "Completed",
     "Suspended",
     "FlowOutcome",
-    "_SuspendExecution",
+    "_SuspendExecutionError",
 ]
 
 # Type variable for flow result type
 R = TypeVar("R")
 
 
-class _SuspendExecution(Exception):
+class _SuspendExecutionErrorError(Exception):
     """
     Internal exception used to signal flow suspension.
 
@@ -254,7 +254,7 @@ class Suspended:
 #         # outcome.reason is available here
 #         print(outcome.reason)
 #
-FlowOutcome = Union[Completed[R], Suspended]
+FlowOutcome = Completed[R] | Suspended
 
 
 # =============================================================================

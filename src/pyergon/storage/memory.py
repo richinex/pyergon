@@ -637,19 +637,6 @@ class InMemoryExecutionLog(ExecutionLog):
 
             return True
 
-    async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
-        """
-        Get all invocations (steps) for a specific flow.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 164-172
-
-        Returns:
-            List of all invocations for this flow
-        """
-        async with self._lock:
-            # Filter invocations by flow_id
-            return [inv for (fid, _), inv in self._invocations.items() if fid == flow_id]
-
     async def get_next_timer_fire_time(self) -> datetime | None:
         """
         Get the earliest timer fire time across all flows.

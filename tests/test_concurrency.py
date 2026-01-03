@@ -94,18 +94,18 @@ async def test_concurrent_storage_writes_no_corruption(in_memory_storage):
         """Write multiple invocations."""
         flow_id = f"writer_{writer_id}"
 
-        for step in range(writes_per_writer):
+        for step_num in range(writes_per_writer):
             await in_memory_storage.log_invocation_start(
                 flow_id=flow_id,
-                step=step,
+                step=step_num,
                 class_name="WriterFlow",
-                method_name=f"step_{step}",
-                parameters=pickle.dumps({"writer": writer_id, "step": step}),
-                params_hash=hash((writer_id, step)),
+                method_name=f"step_{step_num}",
+                parameters=pickle.dumps({"writer": writer_id, "step": step_num}),
+                params_hash=hash((writer_id, step_num)),
             )
 
             # Small delay to increase chance of race conditions
-            if step % 10 == 0:
+            if step_num % 10 == 0:
                 await asyncio.sleep(0.001)
 
             await in_memory_storage.log_invocation_completion(
@@ -355,20 +355,20 @@ async def test_interleaved_reads_writes_consistent(in_memory_storage):
 
     async def writer():
         """Write steps sequentially."""
-        for step in range(num_steps):
+        for step_num in range(num_steps):
             await in_memory_storage.log_invocation_start(
                 flow_id=flow_id,
-                step=step,
+                step=step_num,
                 class_name="TestFlow",
-                method_name=f"step_{step}",
+                method_name=f"step_{step_num}",
                 parameters=pickle.dumps({}),
-                params_hash=hash(step),
+                params_hash=hash(step_num),
             )
             await asyncio.sleep(0.001)  # Simulate work
             await in_memory_storage.log_invocation_completion(
                 flow_id=flow_id,
-                step=step,
-                return_value=pickle.dumps(f"result_{step}"),
+                step=step_num,
+                return_value=pickle.dumps(f"result_{step_num}"),
             )
 
     async def reader():

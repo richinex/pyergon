@@ -182,25 +182,6 @@ class ExecutionLog(ABC):
         """
         pass
 
-    @abstractmethod
-    async def has_non_retryable_error(self, flow_id: str) -> bool:
-        """
-        Check if flow has encountered a non-retryable error.
-
-        Used to prevent retry loops on permanent failures.
-
-        From Dave Cheney: "Eliminate error handling by eliminating errors" -
-        by checking this flag, workers can skip flows with permanent errors
-        without needing try/catch logic.
-
-        Args:
-            flow_id: Unique flow identifier
-
-        Returns:
-            True if flow has non-retryable error, False otherwise
-        """
-        pass
-
     # ========================================================================
     # Queue Operations - Distribute work across workers
     # ========================================================================

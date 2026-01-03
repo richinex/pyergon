@@ -146,18 +146,18 @@ async def test_storage_preserves_all_invocations(num_invocations, max_step):
     steps = list(range(min(num_invocations, max_step + 1)))
 
     # Save invocations using storage methods
-    for step in steps:
+    for step_num in steps:
         await storage.log_invocation_start(
             flow_id=flow_id,
-            step=step,
+            step=step_num,
             class_name="TestFlow",
-            method_name=f"step_{step}",
+            method_name=f"step_{step_num}",
             parameters=b"",
-            params_hash=hash((flow_id, step)),
+            params_hash=hash((flow_id, step_num)),
         )
         await storage.log_invocation_completion(
             flow_id=flow_id,
-            step=step,
+            step=step_num,
             return_value=b"success",
         )
 
@@ -188,19 +188,19 @@ async def test_storage_isolates_flows(num_flows, steps_per_flow):
 
     # Save invocations for each flow
     for flow_id in flow_ids:
-        for step in range(steps_per_flow):
+        for step_num in range(steps_per_flow):
             await storage.log_invocation_start(
                 flow_id=flow_id,
-                step=step,
+                step=step_num,
                 class_name="TestFlow",
-                method_name=f"step_{step}",
+                method_name=f"step_{step_num}",
                 parameters=b"",
-                params_hash=hash((flow_id, step)),
+                params_hash=hash((flow_id, step_num)),
             )
             await storage.log_invocation_completion(
                 flow_id=flow_id,
-                step=step,
-                return_value=pickle.dumps(f"result_{flow_id}_{step}"),
+                step=step_num,
+                return_value=pickle.dumps(f"result_{flow_id}_{step_num}"),
             )
 
     # Property: each flow has exactly its own invocations
@@ -415,19 +415,19 @@ async def test_concurrent_storage_operations(num_concurrent, operations_per_task
     async def writer_task(task_id: int):
         """Write operations for one task."""
         flow_id = f"flow_{task_id}"
-        for step in range(operations_per_task):
+        for step_num in range(operations_per_task):
             await storage.log_invocation_start(
                 flow_id=flow_id,
-                step=step,
+                step=step_num,
                 class_name="ConcurrentFlow",
-                method_name=f"step_{step}",
-                parameters=pickle.dumps({"task_id": task_id, "step": step}),
-                params_hash=hash((task_id, step)),
+                method_name=f"step_{step_num}",
+                parameters=pickle.dumps({"task_id": task_id, "step": step_num}),
+                params_hash=hash((task_id, step_num)),
             )
             await storage.log_invocation_completion(
                 flow_id=flow_id,
-                step=step,
-                return_value=pickle.dumps(f"result_{task_id}_{step}"),
+                step=step_num,
+                return_value=pickle.dumps(f"result_{task_id}_{step_num}"),
             )
         return task_id
 
