@@ -66,11 +66,9 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run tests
-        run: uv run pytest -v -s -p no:timeout
+        run: uv run pytest
         env:
           PYTHONPATH: src
-          PYTHONUNBUFFERED: 1
-        timeout-minutes: 2
 
   build:
     name: Build Package
