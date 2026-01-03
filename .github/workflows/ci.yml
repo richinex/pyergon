@@ -67,11 +67,11 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest --cov=src/pyergon --cov-report=term
+          uv run pytest -v
           echo "✓ Tests completed successfully"
         env:
           PYTHONPATH: src
-        timeout-minutes: 5
+        timeout-minutes: 3
 
   build:
     name: Build Package
