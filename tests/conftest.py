@@ -23,7 +23,6 @@ from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
 def pytest_sessionfinish(session, exitstatus):
     """Force cleanup after all tests complete to prevent CI hanging."""
     import os
-    import signal
 
     # In CI environments only, force exit to prevent hanging
     if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
