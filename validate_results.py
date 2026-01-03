@@ -1,5 +1,5 @@
 """
-Validation test: Verify both Celery and Ergon compute correct results.
+Validation test: Verify both Celery and PyErgon compute correct results.
 
 Expected workflow result:
   step1() -> 1
@@ -13,10 +13,10 @@ from dataclasses import dataclass
 # Celery imports
 from benchmark_celery import celery_app, celery_step1, celery_step2, celery_step3
 
-# Ergon imports
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.redis import RedisExecutionLog
-from ergon.core import TaskStatus
+# PyErgon imports
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.redis import RedisExecutionLog
+from pyergon.core import TaskStatus
 
 @dataclass
 @flow_type
@@ -67,8 +67,8 @@ def test_celery():
         return False
 
 async def test_ergon():
-    """Test Ergon workflow returns correct result."""
-    print("\nTesting Ergon...")
+    """Test PyErgon workflow returns correct result."""
+    print("\nTesting PyErgon...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=10)
     await storage.connect()
@@ -105,21 +105,21 @@ async def test_ergon():
                                 print(f"  Final result = {final_result} (expected: 4)")
 
                                 if final_result == 4:
-                                    print("✓ Ergon: PASSED - result is correct (4)")
+                                    print("✓ PyErgon: PASSED - result is correct (4)")
                                     await handle.shutdown()
                                     return True
                                 else:
-                                    print(f"✗ Ergon: FAILED - result is {final_result}, expected 4")
+                                    print(f"✗ PyErgon: FAILED - result is {final_result}, expected 4")
                                     await handle.shutdown()
                                     return False
                             break
                 elif task.status == TaskStatus.FAILED:
-                    print(f"✗ Ergon: FAILED - workflow failed with status {task.status}")
+                    print(f"✗ PyErgon: FAILED - workflow failed with status {task.status}")
                     await handle.shutdown()
                     return False
             await asyncio.sleep(0.1)
 
-        print("✗ Ergon: TIMEOUT - workflow did not complete in 10 seconds")
+        print("✗ PyErgon: TIMEOUT - workflow did not complete in 10 seconds")
         await handle.shutdown()
         return False
 

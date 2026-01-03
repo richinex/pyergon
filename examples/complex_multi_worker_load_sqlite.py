@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from typing import Dict
 import threading
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.core import RetryPolicy
-from ergon.storage.sqlite import SqliteExecutionLog
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.core import RetryPolicy
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 # =============================================================================

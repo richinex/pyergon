@@ -28,10 +28,10 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Protocol
 import pickle
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.executor.signal import await_external_signal
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.executor.signal import await_external_signal
+from pyergon.core import TaskStatus
 
 
 # Global execution counters

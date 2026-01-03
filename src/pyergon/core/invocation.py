@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, TypeVar
 
-from ergon.core.status import InvocationStatus
-from ergon.core.retry import RetryPolicy
+from pyergon.core.status import InvocationStatus
+from pyergon.core.retry import RetryPolicy
 
 T = TypeVar('T')
 

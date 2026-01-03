@@ -50,8 +50,8 @@ except ImportError:
         "Install with: pip install redis"
     )
 
-from ergon.core import Invocation, InvocationStatus, TaskStatus, ScheduledFlow
-from ergon.storage.base import ExecutionLog, StorageError
+from pyergon.core import Invocation, InvocationStatus, TaskStatus, ScheduledFlow
+from pyergon.storage.base import ExecutionLog, StorageError
 
 
 class RedisExecutionLog(ExecutionLog):
@@ -649,7 +649,7 @@ class RedisExecutionLog(ExecutionLog):
 
         Returns TimerInfo objects with flow_id, step, fire_at, and timer_name.
         """
-        from ergon.core import TimerInfo
+        from pyergon.core import TimerInfo
 
         self._check_connected()
 

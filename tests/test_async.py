@@ -5,7 +5,7 @@ Tests async storage operations.
 """
 
 import pytest
-import ergon
+import pyergon
 import uuid
 import asyncio
 
@@ -13,7 +13,7 @@ import asyncio
 @pytest.mark.asyncio
 async def test_in_memory_get_invocation_not_found():
     """Test that get_invocation returns None for non-existent invocation."""
-    storage = ergon.InMemoryExecutionLog()
+    storage = pyergon.InMemoryExecutionLog()
 
     flow_id = str(uuid.uuid4())
     result = await storage.get_invocation(flow_id, step=0)
@@ -24,7 +24,7 @@ async def test_in_memory_get_invocation_not_found():
 @pytest.mark.asyncio
 async def test_in_memory_get_invocations_for_flow_empty():
     """Test that get_invocations_for_flow returns empty list for non-existent flow."""
-    storage = ergon.InMemoryExecutionLog()
+    storage = pyergon.InMemoryExecutionLog()
 
     flow_id = str(uuid.uuid4())
     result = await storage.get_invocations_for_flow(flow_id)
@@ -35,7 +35,7 @@ async def test_in_memory_get_invocations_for_flow_empty():
 @pytest.mark.asyncio
 async def test_in_memory_reset():
     """Test that reset() works without errors."""
-    storage = ergon.InMemoryExecutionLog()
+    storage = pyergon.InMemoryExecutionLog()
 
     # Reset should succeed even on empty storage
     await storage.reset()
@@ -44,7 +44,7 @@ async def test_in_memory_reset():
 @pytest.mark.asyncio
 async def test_sqlite_get_invocation_not_found():
     """Test that get_invocation returns None for non-existent invocation."""
-    storage = await ergon.SqliteExecutionLog.in_memory()
+    storage = await pyergon.SqliteExecutionLog.in_memory()
 
     flow_id = str(uuid.uuid4())
     result = await storage.get_invocation(flow_id, step=0)
@@ -55,7 +55,7 @@ async def test_sqlite_get_invocation_not_found():
 @pytest.mark.asyncio
 async def test_sqlite_get_invocations_for_flow_empty():
     """Test that get_invocations_for_flow returns empty list for non-existent flow."""
-    storage = await ergon.SqliteExecutionLog.in_memory()
+    storage = await pyergon.SqliteExecutionLog.in_memory()
 
     flow_id = str(uuid.uuid4())
     result = await storage.get_invocations_for_flow(flow_id)
@@ -66,7 +66,7 @@ async def test_sqlite_get_invocations_for_flow_empty():
 @pytest.mark.asyncio
 async def test_sqlite_reset():
     """Test that reset() works without errors."""
-    storage = await ergon.SqliteExecutionLog.in_memory()
+    storage = await pyergon.SqliteExecutionLog.in_memory()
 
     # Reset should succeed even on empty storage
     await storage.reset()
@@ -75,7 +75,7 @@ async def test_sqlite_reset():
 @pytest.mark.asyncio
 async def test_invalid_uuid():
     """Test that invalid UUID is accepted (stored as string)."""
-    storage = ergon.InMemoryExecutionLog()
+    storage = pyergon.InMemoryExecutionLog()
 
     # Python implementation stores flow_id as string, doesn't validate UUID format
     # This is valid behavior - just returns None for non-existent flow
@@ -86,7 +86,7 @@ async def test_invalid_uuid():
 @pytest.mark.asyncio
 async def test_concurrent_operations():
     """Test that multiple async operations can run concurrently."""
-    storage = ergon.InMemoryExecutionLog()
+    storage = pyergon.InMemoryExecutionLog()
 
     # Create multiple concurrent tasks
     tasks = [

@@ -1,5 +1,5 @@
 """
-SQLite-backed storage implementation for ergon.
+SQLite-backed storage implementation for pyergon.
 
 Design Pattern: Adapter Pattern (Chapter 10)
 SqliteExecutionLog adapts SQLite database to the ExecutionLog interface.
@@ -25,8 +25,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from pathlib import Path
 
-from ergon.core import Invocation, InvocationStatus, ScheduledFlow, TaskStatus
-from ergon.storage.base import ExecutionLog, StorageError
+from pyergon.core import Invocation, InvocationStatus, ScheduledFlow, TaskStatus
+from pyergon.storage.base import ExecutionLog, StorageError
 
 
 class SqliteExecutionLog(ExecutionLog):
@@ -854,7 +854,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         rows = await cursor.fetchall()
 
-        from ergon.core import TimerInfo
+        from pyergon.core import TimerInfo
 
         return [
             TimerInfo(
@@ -1179,7 +1179,7 @@ class SqliteExecutionLog(ExecutionLog):
         Returns:
             List of SignalInfo with flow_id, step, signal_name
         """
-        from ergon.storage.base import SignalInfo
+        from pyergon.storage.base import SignalInfo
 
         self._check_connected()
 

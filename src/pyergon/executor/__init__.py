@@ -14,13 +14,13 @@ not what it contains (executors, timers).
 
 Note: Scheduler and Worker have been moved to top-level ergon module
 following Dave Cheney's naming advice:
-- ergon.Executor (not ergon.FlowExecutor)
-- ergon.Scheduler (not ergon.FlowScheduler)
-- ergon.Worker (not ergon.FlowWorker)
+- pyergon.Executor (not pyergon.FlowExecutor)
+- pyergon.Scheduler (not pyergon.FlowScheduler)
+- pyergon.Worker (not pyergon.FlowWorker)
 """
 
-from ergon.executor.instance import Executor, execute_flow
-from ergon.executor.outcome import (
+from pyergon.executor.instance import Executor, execute_flow
+from pyergon.executor.outcome import (
     SuspendReason,
     Completed,
     Suspended,
@@ -28,12 +28,12 @@ from ergon.executor.outcome import (
     is_completed,
     is_suspended,
 )
-from ergon.executor.suspension_payload import SuspensionPayload
-from ergon.executor.pending_child import PendingChild
-from ergon.executor.child_completion import complete_child_flow
-from ergon.executor.timer import schedule_timer, schedule_timer_named
-from ergon.executor.signal import await_external_signal, signal_resume
-from ergon.executor.dag import StepHandle, DeferredRegistry, DagSummary, execute_dag
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.executor.pending_child import PendingChild
+from pyergon.executor.child_completion import complete_child_flow
+from pyergon.executor.timer import schedule_timer, schedule_timer_named
+from pyergon.executor.signal import await_external_signal, signal_resume
+from pyergon.executor.dag import StepHandle, DeferredRegistry, DagSummary, execute_dag
 
 __all__ = [
     # Executor

@@ -1,11 +1,11 @@
 """
-Benchmark comparison: Celery vs Ergon using Redis backend.
+Benchmark comparison: Celery vs PyErgon using Redis backend.
 
-This benchmark provides an apples-to-apples comparison between Celery and Ergon
+This benchmark provides an apples-to-apples comparison between Celery and PyErgon
 for distributed task execution using Redis as the backend.
 
 Configuration:
-- Both frameworks use Redis (localhost:6379, db=0 for Ergon, db=1 for Celery)
+- Both frameworks use Redis (localhost:6379, db=0 for PyErgon, db=1 for Celery)
 - Same workload: 100 flows with 3 steps each
 - 3 workers for multi-worker test
 - JSON serialization for fair comparison
@@ -22,7 +22,7 @@ Usage:
     celery -A benchmark_celery_vs_ergon worker --loglevel=info --concurrency=3 --prefetch-multiplier=1
 
     # Run benchmark
-    PYTHONPATH=src uv run python benchmark_celery_vs_ergon.py
+    PYTHONPATH=src uv run python benchmark_celery_vs_pyergon.py
 """
 
 import asyncio
@@ -33,10 +33,10 @@ from dataclasses import dataclass
 # Celery imports
 from celery import Celery, group
 
-# Ergon imports
-from ergon import flow, flow_type, step, Executor, Scheduler, Worker
-from ergon.storage.redis import RedisExecutionLog
-from ergon.core import TaskStatus
+# PyErgon imports
+from pyergon import flow, flow_type, step, Executor, Scheduler, Worker
+from pyergon.storage.redis import RedisExecutionLog
+from pyergon.core import TaskStatus
 
 # ============================================================================
 # Celery Configuration (following best practices)
@@ -63,26 +63,26 @@ celery_app.conf.update(
 )
 
 # ============================================================================
-# Celery Tasks (matching Ergon's step structure)
+# Celery Tasks (matching PyErgon's step structure)
 # ============================================================================
 
 @celery_app.task(name='benchmark.celery_step1')
 def celery_step1():
-    """Equivalent to Ergon's step1."""
+    """Equivalent to PyErgon's step1."""
     return 1
 
 @celery_app.task(name='benchmark.celery_step2')
 def celery_step2(value):
-    """Equivalent to Ergon's step2."""
+    """Equivalent to PyErgon's step2."""
     return value + 1
 
 @celery_app.task(name='benchmark.celery_step3')
 def celery_step3(value):
-    """Equivalent to Ergon's step3."""
+    """Equivalent to PyErgon's step3."""
     return value * 2
 
 # ============================================================================
-# Ergon Flow Definition (matching Celery structure)
+# PyErgon Flow Definition (matching Celery structure)
 # ============================================================================
 
 @dataclass
@@ -132,7 +132,7 @@ def benchmark_celery_simple(count: int = 100) -> float:
     """
     Benchmark Celery simple task execution.
 
-    Executes tasks synchronously (one after another) to match Ergon's
+    Executes tasks synchronously (one after another) to match PyErgon's
     simple step execution benchmark.
     """
     print(f"[Celery] {count} workflows...")
@@ -188,7 +188,7 @@ def benchmark_celery_parallel(count: int = 50) -> float:
     Benchmark Celery parallel task execution using groups.
 
     Executes 3 tasks in parallel for each workflow using Celery groups,
-    matching Ergon's parallel step execution.
+    matching PyErgon's parallel step execution.
     """
     print(f"[Celery] {count} workflows, 3 parallel tasks each...")
 
@@ -208,16 +208,16 @@ def benchmark_celery_parallel(count: int = 50) -> float:
     return elapsed
 
 # ============================================================================
-# Ergon Benchmarks
+# PyErgon Benchmarks
 # ============================================================================
 
 async def benchmark_ergon_simple(count: int = 100) -> float:
     """
-    Benchmark Ergon simple step execution with distributed workers.
+    Benchmark PyErgon simple step execution with distributed workers.
 
     APPLES-TO-APPLES: Uses distributed workers like Celery (not in-process Executor).
     """
-    print(f"[Ergon] {count} workflows...")
+    print(f"[PyErgon] {count} workflows...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -265,8 +265,8 @@ async def benchmark_ergon_simple(count: int = 100) -> float:
         await storage.close()
 
 async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 100) -> float:
-    """Benchmark Ergon multi-worker execution with Redis backend."""
-    print(f"[Ergon] {worker_count} workers, {flow_count} workflows...")
+    """Benchmark PyErgon multi-worker execution with Redis backend."""
+    print(f"[PyErgon] {worker_count} workers, {flow_count} workflows...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -319,12 +319,12 @@ async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 10
 
 async def benchmark_ergon_parallel(count: int = 50) -> float:
     """
-    Benchmark Ergon parallel task execution with distributed workers.
+    Benchmark PyErgon parallel task execution with distributed workers.
 
     APPLES-TO-APPLES: Submits 3 independent tasks in parallel (not in-process asyncio.gather).
     Matches Celery's group() behavior.
     """
-    print(f"[Ergon] {count} workflows, 3 parallel tasks each...")
+    print(f"[PyErgon] {count} workflows, 3 parallel tasks each...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -423,7 +423,7 @@ def check_celery_workers():
 async def main():
     """Run all benchmarks and compare results."""
     print("="*80)
-    print("Celery vs Ergon Benchmark")
+    print("Celery vs PyErgon Benchmark")
     print("="*80)
 
     if not check_redis_connection():
@@ -472,11 +472,11 @@ async def main():
                 if celery_time < ergon_time:
                     winner = f"Celery ({ergon_time/celery_time:.2f}x)"
                 else:
-                    winner = f"Ergon ({celery_time/ergon_time:.2f}x)"
+                    winner = f"PyErgon ({celery_time/ergon_time:.2f}x)"
 
                 print(f"| {bench_type.capitalize():9} | {celery_time:6.3f}s | {ergon_time:5.3f}s | {winner} |")
     else:
-        print("\nCelery workers not available - showing Ergon-only results:")
+        print("\nCelery workers not available - showing PyErgon-only results:")
         print(f"  Simple execution: {results.get('ergon_simple', 0):.3f}s")
         print(f"  Multi-worker:     {results.get('ergon_concurrent', 0):.3f}s")
         print(f"  Parallel:         {results.get('ergon_parallel', 0):.3f}s")

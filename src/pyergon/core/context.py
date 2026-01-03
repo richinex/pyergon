@@ -28,13 +28,13 @@ from contextvars import ContextVar
 from threading import Lock
 from typing import Any, Optional, TypeVar, TYPE_CHECKING
 
-from ergon.core.call_type import CallType
-from ergon.core.invocation import Invocation
-from ergon.storage.base import ExecutionLog
+from pyergon.core.call_type import CallType
+from pyergon.core.invocation import Invocation
+from pyergon.storage.base import ExecutionLog
 
 # Avoid circular import for type checking
 if TYPE_CHECKING:
-    from ergon.executor.outcome import SuspendReason
+    from pyergon.executor.outcome import SuspendReason
 
 T = TypeVar('T')
 
@@ -511,7 +511,7 @@ class Context:
 
         Example:
             ```python
-            from ergon.executor.outcome import SuspendReason
+            from pyergon.executor.outcome import SuspendReason
 
             reason = SuspendReason(
                 flow_id=ctx.flow_id,

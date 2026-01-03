@@ -19,10 +19,10 @@ PYTHONPATH=src python examples/simple_timer_sqlite.py
 import asyncio
 from dataclasses import dataclass
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.executor.timer import schedule_timer_named
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.executor.timer import schedule_timer_named
+from pyergon.core import TaskStatus
 
 
 @dataclass

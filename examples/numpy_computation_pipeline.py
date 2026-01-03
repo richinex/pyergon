@@ -39,9 +39,9 @@ from typing import List
 
 import numpy as np
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.core import RetryPolicy, TaskStatus
-from ergon.storage.sqlite import SqliteExecutionLog
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
 

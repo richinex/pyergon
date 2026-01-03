@@ -1,5 +1,5 @@
 """
-Concurrency and race condition tests for ergon.
+Concurrency and race condition tests for pyergon.
 
 These tests verify that the system handles concurrent operations correctly:
 - Multiple workers processing flows simultaneously
@@ -16,12 +16,12 @@ from uuid import uuid4
 from typing import List, Set
 from datetime import datetime
 
-from ergon.core import InvocationStatus, TaskStatus
-from ergon.storage import InMemoryExecutionLog, SqliteExecutionLog
-from ergon.decorators import flow, flow_type, step
-from ergon.executor import Executor, Completed
-from ergon.executor.scheduler import Scheduler
-from ergon.executor.worker import Worker
+from pyergon.core import InvocationStatus, TaskStatus
+from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
+from pyergon.decorators import flow, flow_type, step
+from pyergon.executor import Executor, Completed
+from pyergon.executor.scheduler import Scheduler
+from pyergon.executor.worker import Worker
 
 
 # ==============================================================================

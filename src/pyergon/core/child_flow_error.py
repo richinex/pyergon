@@ -10,7 +10,7 @@ from failed child flows including the retryability flag.
 - Exceptions: https://docs.python.org/3/library/exceptions.html
 """
 
-from ergon.core.retry import RetryableError
+from pyergon.core.retry import RetryableError
 
 __all__ = ["ChildFlowError"]
 

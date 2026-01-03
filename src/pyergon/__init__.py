@@ -14,7 +14,7 @@ Example:
     ```python
     import asyncio
     from dataclasses import dataclass
-    from ergon import flow, flow_type, step, SqliteExecutionLog
+    from pyergon import flow, flow_type, step, SqliteExecutionLog
 
     @dataclass
     @flow_type
@@ -48,7 +48,7 @@ Example:
 """
 
 # Core types - Pure Python implementations
-from ergon.core import (
+from pyergon.core import (
     Invocation,
     InvocationStatus,
     CallType,
@@ -61,16 +61,16 @@ from ergon.core import (
 )
 
 # Storage - Pure Python implementations (Adapter pattern)
-from ergon.storage import ExecutionLog, SqliteExecutionLog, InMemoryExecutionLog
+from pyergon.storage import ExecutionLog, SqliteExecutionLog, InMemoryExecutionLog
 
 # Decorators - Pure Python
-from ergon.decorators import flow, flow_type, step
+from pyergon.decorators import flow, flow_type, step
 
 # Execution - Pure Python (Template Method + Strategy patterns)
 # Following Dave Cheney: "The name of an identifier includes its package name"
-# ergon.Executor, ergon.Scheduler, ergon.Worker (no Flow prefix needed)
-from ergon.executor.instance import Executor, execute_flow
-from ergon.executor.outcome import (
+# pyergon.Executor, pyergon.Scheduler, pyergon.Worker (no Flow prefix needed)
+from pyergon.executor.instance import Executor, execute_flow
+from pyergon.executor.outcome import (
     SuspendReason,
     Completed,
     Suspended,
@@ -78,21 +78,21 @@ from ergon.executor.outcome import (
     is_completed,
     is_suspended,
 )
-from ergon.executor.suspension_payload import SuspensionPayload
-from ergon.executor.pending_child import PendingChild
-from ergon.executor.child_completion import complete_child_flow
-from ergon.executor.scheduler import Scheduler, SchedulerError
-from ergon.executor.worker import Worker, WorkerHandle, WorkerError
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.executor.pending_child import PendingChild
+from pyergon.executor.child_completion import complete_child_flow
+from pyergon.executor.scheduler import Scheduler, SchedulerError
+from pyergon.executor.worker import Worker, WorkerHandle, WorkerError
 
 # Timers - Pure Python
-from ergon.executor import schedule_timer, schedule_timer_named
+from pyergon.executor import schedule_timer, schedule_timer_named
 
 # Signals - Pure Python (External event coordination)
-from ergon.executor import await_external_signal, signal_resume
+from pyergon.executor import await_external_signal, signal_resume
 
 # DAG execution - Pure Python (Parallel step execution with dependencies)
-from ergon.executor import StepHandle, DeferredRegistry, DagSummary, execute_dag
-from ergon.executor.dag_runtime import dag, DagExecutionError
+from pyergon.executor import StepHandle, DeferredRegistry, DagSummary, execute_dag
+from pyergon.executor.dag_runtime import dag, DagExecutionError
 
 # Version
 __version__ = "0.1.0"

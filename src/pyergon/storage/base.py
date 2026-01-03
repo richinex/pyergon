@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Protocol, runtime_checkable
 
-from ergon.core import Invocation, ScheduledFlow, TaskStatus
+from pyergon.core import Invocation, ScheduledFlow, TaskStatus
 
 
 @dataclass
@@ -773,7 +773,7 @@ class WorkNotificationSource(Protocol):
 
     **Usage**:
     ```python
-    from ergon.storage import WorkNotificationSource
+    from pyergon.storage import WorkNotificationSource
 
     class MyStorage(ExecutionLog):
         def __init__(self):

@@ -35,8 +35,8 @@ from datetime import datetime
 from typing import Any, Callable, Awaitable, Optional, Dict, TypeVar, Generic
 from uuid import UUID
 
-from ergon.core import ScheduledFlow
-from ergon.storage.base import ExecutionLog
+from pyergon.core import ScheduledFlow
+from pyergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,8 @@ class Registry(Generic[S]):
             registry.register(HolidaySaga, lambda saga: saga.run_saga())
             registry.register(OrderFlow, lambda flow: flow.process())
         """
-        from ergon.executor.instance import Executor
-        from ergon.executor.outcome import Completed
+        from pyergon.executor.instance import Executor
+        from pyergon.executor.outcome import Completed
 
         # Get stable type ID (Rust uses T::type_id())
         # Python @flow decorator adds type_id() method
@@ -270,7 +270,7 @@ class Worker:
         # Event-driven notification support (runtime protocol checking)
         # From Rust: Worker requires WorkNotificationSource at compile time via trait bounds
         # Python: Runtime isinstance() check provides flexibility
-        from ergon.storage import WorkNotificationSource, TimerNotificationSource
+        from pyergon.storage import WorkNotificationSource, TimerNotificationSource
 
         self._supports_work_notifications = isinstance(storage, WorkNotificationSource)
         self._supports_timer_notifications = isinstance(storage, TimerNotificationSource)
@@ -726,8 +726,8 @@ class Worker:
         From Dave Cheney: "Only handle an error once"
         Error handling is delegated to execution.handle_flow_error().
         """
-        from ergon.executor.outcome import Completed, Suspended
-        from ergon.executor.execution import (
+        from pyergon.executor.outcome import Completed, Suspended
+        from pyergon.executor.execution import (
             handle_flow_completion,
             handle_flow_error,
             handle_suspended_flow

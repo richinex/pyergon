@@ -1,11 +1,11 @@
 """
-Ergon benchmark using Redis backend.
+PyErgon benchmark using Redis backend.
 
-This benchmark measures Ergon's performance for distributed task execution
+This benchmark measures PyErgon's performance for distributed task execution
 using Redis as the backend.
 
 Configuration:
-- Redis (localhost:6379, db=0 for Ergon)
+- Redis (localhost:6379, db=0 for PyErgon)
 - 3 workers for multi-worker test
 
 Usage:
@@ -13,7 +13,7 @@ Usage:
     redis-server
 
     # Run benchmark
-    PYTHONPATH=src uv run python benchmark_ergon.py
+    PYTHONPATH=src uv run python benchmark_pyergon.py
 """
 
 import asyncio
@@ -21,12 +21,12 @@ import time
 import sys
 from dataclasses import dataclass
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.redis import RedisExecutionLog
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.redis import RedisExecutionLog
+from pyergon.core import TaskStatus
 
 # ============================================================================
-# Ergon Flow Definitions
+# PyErgon Flow Definitions
 # ============================================================================
 
 @dataclass
@@ -69,16 +69,16 @@ class SingleTaskFlow:
         return await self.compute()
 
 # ============================================================================
-# Ergon Benchmarks
+# PyErgon Benchmarks
 # ============================================================================
 
 async def benchmark_ergon_simple(count: int = 100) -> float:
     """
-    Benchmark Ergon simple step execution with distributed workers.
+    Benchmark PyErgon simple step execution with distributed workers.
 
     Uses distributed workers (not in-process Executor).
     """
-    print(f"[Ergon] {count} workflows...")
+    print(f"[PyErgon] {count} workflows...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -126,8 +126,8 @@ async def benchmark_ergon_simple(count: int = 100) -> float:
         await storage.close()
 
 async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 100) -> float:
-    """Benchmark Ergon multi-worker execution with Redis backend."""
-    print(f"[Ergon] {worker_count} workers, {flow_count} workflows...")
+    """Benchmark PyErgon multi-worker execution with Redis backend."""
+    print(f"[PyErgon] {worker_count} workers, {flow_count} workflows...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -180,11 +180,11 @@ async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 10
 
 async def benchmark_ergon_parallel(count: int = 50) -> float:
     """
-    Benchmark Ergon parallel task execution with distributed workers.
+    Benchmark PyErgon parallel task execution with distributed workers.
 
     Submits 3 independent tasks in parallel (not in-process asyncio.gather).
     """
-    print(f"[Ergon] {count} workflows, 3 parallel tasks each...")
+    print(f"[PyErgon] {count} workflows, 3 parallel tasks each...")
 
     storage = RedisExecutionLog("redis://localhost:6379/0", max_connections=50)
     await storage.connect()
@@ -261,9 +261,9 @@ def check_redis_connection():
 # ============================================================================
 
 async def main():
-    """Run all Ergon benchmarks."""
+    """Run all PyErgon benchmarks."""
     print("="*80)
-    print("Ergon Benchmark")
+    print("PyErgon Benchmark")
     print("="*80)
 
     if not check_redis_connection():

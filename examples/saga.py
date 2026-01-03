@@ -12,8 +12,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from ergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
+from pyergon.core import TaskStatus
 
 # Suppress worker logging for clean output
 logging.basicConfig(level=logging.CRITICAL)

@@ -24,7 +24,7 @@ import hashlib
 import xxhash
 from typing import Any, Callable, Optional, TypeVar, Union, TYPE_CHECKING
 
-from ergon.core import (
+from pyergon.core import (
     get_current_context,
     RetryPolicy,
     RetryableError,
@@ -32,8 +32,8 @@ from ergon.core import (
 )
 
 if TYPE_CHECKING:
-    from ergon.core.invokable_flow import InvokableFlow
-    from ergon.executor.pending_child import PendingChild
+    from pyergon.core.invokable_flow import InvokableFlow
+    from pyergon.executor.pending_child import PendingChild
 
 T = TypeVar('T')
 F = TypeVar('F', bound=Callable[..., Any])
@@ -336,7 +336,7 @@ def flow_type(
 
     Example:
         ```python
-        from ergon.core import RetryPolicy
+        from pyergon.core import RetryPolicy
 
         # Basic flow type
         @flow_type
@@ -451,7 +451,7 @@ def flow_type(
                 ```
             """
             # Import here to avoid circular dependency
-            from ergon.executor.pending_child import PendingChild
+            from pyergon.executor.pending_child import PendingChild
 
             # Pure builder - just capture data, no side effects
             # All logic (UUID generation, scheduling) happens in .result()

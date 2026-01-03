@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from ergon.core.status import TaskStatus
+from pyergon.core.status import TaskStatus
 
 
 @dataclass

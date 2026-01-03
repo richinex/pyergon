@@ -52,7 +52,7 @@ addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
-    "--cov=src/ergon",
+    "--cov=src/pyergon",
     "--cov-report=html",
     "--cov-report=term-missing:skip-covered",
     "--timeout=30",

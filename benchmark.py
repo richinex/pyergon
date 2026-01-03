@@ -17,9 +17,9 @@ import logging
 from dataclasses import dataclass
 from io import StringIO
 
-from ergon import flow, flow_type, step, Executor, Scheduler, Worker
-from ergon.storage.memory import InMemoryExecutionLog
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Executor, Scheduler, Worker
+from pyergon.storage.memory import InMemoryExecutionLog
+from pyergon.core import TaskStatus
 
 logging.basicConfig(level=logging.CRITICAL)
 

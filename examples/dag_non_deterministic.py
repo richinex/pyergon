@@ -15,9 +15,9 @@ PYTHONPATH=src python examples/dag_non_deterministic.py
 """
 
 import asyncio
-from ergon import flow, step, Executor
-from ergon.executor.outcome import Completed
-from ergon.storage.sqlite import SqliteExecutionLog
+from pyergon import flow, step, Executor
+from pyergon.executor.outcome import Completed
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 # Simulates external state that changes between runs

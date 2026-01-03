@@ -21,15 +21,15 @@ import pickle
 from typing import Callable, Awaitable, TypeVar, Generic
 from uuid import uuid4
 
-from ergon.core import (
+from pyergon.core import (
     Context,
     EXECUTION_CONTEXT,
     CALL_TYPE,
     CallType,
     _CACHE_MISS,
 )
-from ergon.executor.outcome import FlowOutcome, Completed, Suspended, _SuspendExecution
-from ergon.storage.base import ExecutionLog
+from pyergon.executor.outcome import FlowOutcome, Completed, Suspended, _SuspendExecution
+from pyergon.storage.base import ExecutionLog
 
 T = TypeVar('T')  # Flow type
 R = TypeVar('R')  # Result type

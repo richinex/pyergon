@@ -17,15 +17,15 @@ from hypothesis import Phase
 from uuid import uuid4, UUID
 from datetime import datetime, timedelta
 
-from ergon.core import (
+from pyergon.core import (
     Invocation,
     InvocationStatus,
     RetryPolicy,
     CallType,
 )
-from ergon.storage import InMemoryExecutionLog, SqliteExecutionLog
-from ergon.decorators import flow, flow_type, step
-from ergon.executor import Executor, FlowOutcome, Completed, Suspended
+from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
+from pyergon.decorators import flow, flow_type, step
+from pyergon.executor import Executor, FlowOutcome, Completed, Suspended
 
 
 # ==============================================================================

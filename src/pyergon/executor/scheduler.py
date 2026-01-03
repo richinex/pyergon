@@ -30,7 +30,7 @@ import pickle
 from uuid_extensions import uuid7
 from typing import Any, Optional
 
-from ergon.storage.base import ExecutionLog
+from pyergon.storage.base import ExecutionLog
 
 
 class Scheduler:
@@ -134,7 +134,7 @@ class Scheduler:
             SchedulerError: If flow cannot be serialized or stored
 
         Example:
-            from ergon.core import RetryPolicy
+            from pyergon.core import RetryPolicy
 
             @dataclass
             @flow_type
@@ -176,7 +176,7 @@ class Scheduler:
         # From Rust: child_flow.rs lines 248-266 (creating ScheduledFlow for child)
         # Same structure applies for all flows - child or top-level
         from datetime import datetime, timezone
-        from ergon.core import ScheduledFlow, TaskStatus
+        from pyergon.core import ScheduledFlow, TaskStatus
 
         now = datetime.now(timezone.utc)
         task_id = flow_id  # In Rust, task_id == flow_id for top-level flows

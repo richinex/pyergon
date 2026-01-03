@@ -21,10 +21,10 @@ import logging
 from typing import Optional
 from datetime import timedelta
 
-from ergon.storage.base import ExecutionLog
-from ergon.core import TaskStatus, ScheduledFlow, InvocationStatus
-from ergon.executor.child_completion import complete_child_flow
-from ergon.executor.outcome import SuspendReason
+from pyergon.storage.base import ExecutionLog
+from pyergon.core import TaskStatus, ScheduledFlow, InvocationStatus
+from pyergon.executor.child_completion import complete_child_flow
+from pyergon.executor.outcome import SuspendReason
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +345,7 @@ async def check_should_retry(
             f"Flow {flow.flow_id} has no explicit retry policy but error is retryable, "
             f"using default: RetryPolicy.STANDARD (3 attempts)"
         )
-        from ergon.core import RetryPolicy
+        from pyergon.core import RetryPolicy
         policy = RetryPolicy.STANDARD
 
     next_attempt = flow.retry_count + 1

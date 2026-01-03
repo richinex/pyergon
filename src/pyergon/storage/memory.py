@@ -1,5 +1,5 @@
 """
-In-memory storage implementation for ergon.
+In-memory storage implementation for pyergon.
 
 Design Pattern: Adapter Pattern
 InMemoryExecutionLog adapts in-memory dictionaries to ExecutionLog interface.
@@ -15,14 +15,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid_extensions import uuid7
 
-from ergon.core import (
+from pyergon.core import (
     Invocation,
     InvocationStatus,
     ScheduledFlow,
     TaskStatus,
     RetryPolicy,
 )
-from ergon.storage.base import ExecutionLog, StorageError
+from pyergon.storage.base import ExecutionLog, StorageError
 
 
 class InMemoryExecutionLog(ExecutionLog):
@@ -482,7 +482,7 @@ class InMemoryExecutionLog(ExecutionLog):
 
         **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
         """
-        from ergon.core import TimerInfo
+        from pyergon.core import TimerInfo
 
         async with self._lock:
             expired = []

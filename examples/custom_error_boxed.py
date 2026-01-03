@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from typing import Dict
 import threading
 
-from ergon import flow, flow_type, Scheduler, Worker
-from ergon.core import TaskStatus, RetryPolicy
-from ergon.storage.sqlite import SqliteExecutionLog
+from pyergon import flow, flow_type, Scheduler, Worker
+from pyergon.core import TaskStatus, RetryPolicy
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
 

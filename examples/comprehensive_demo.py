@@ -40,10 +40,10 @@ import uuid
 from dataclasses import dataclass
 from typing import List
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.core import RetryPolicy, TaskStatus
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.executor.timer import schedule_timer_named
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.executor.timer import schedule_timer_named
 
 
 # ============================================================================
@@ -235,7 +235,7 @@ class OrderFlow:
         then aggregates results.
         """
         # Import DAG runtime
-        from ergon.executor.dag_runtime import dag
+        from pyergon.executor.dag_runtime import dag
 
         # Execute DAG with parallel validation steps
         return await dag(

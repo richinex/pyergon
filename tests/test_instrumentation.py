@@ -19,10 +19,10 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from ergon.core import Context, get_current_context
-from ergon.storage import InMemoryExecutionLog
-from ergon.executor import Executor
-from ergon.decorators import flow, step
+from pyergon.core import Context, get_current_context
+from pyergon.storage import InMemoryExecutionLog
+from pyergon.executor import Executor
+from pyergon.decorators import flow, step
 
 
 @flow

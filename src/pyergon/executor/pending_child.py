@@ -23,14 +23,14 @@ from typing import TypeVar, Generic
 from uuid import UUID, uuid5
 from datetime import datetime, timezone
 
-from ergon.core import (
+from pyergon.core import (
     get_current_context,
     InvocationStatus,
     ScheduledFlow,
     TaskStatus,
 )
-from ergon.executor.suspension_payload import SuspensionPayload
-from ergon.executor.outcome import SuspendReason
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.executor.outcome import SuspendReason
 
 __all__ = ["PendingChild"]
 
@@ -219,7 +219,7 @@ class PendingChild(Generic[R]):
                     else:
                         # Child failed - deserialize and raise error
                         # **Rust Reference**: child_flow.rs lines 179-183 (ExecutionError::User)
-                        from ergon.core import ChildFlowError
+                        from pyergon.core import ChildFlowError
 
                         error_msg: str = pickle.loads(payload.data)
 
@@ -253,7 +253,7 @@ class PendingChild(Generic[R]):
                     else:
                         # Child failed - deserialize and raise error
                         # **Rust Reference**: child_flow.rs lines 219-223 (ExecutionError::User)
-                        from ergon.core import ChildFlowError
+                        from pyergon.core import ChildFlowError
 
                         error_msg: str = pickle.loads(payload.data)
 
@@ -329,7 +329,7 @@ class PendingChild(Generic[R]):
             else:
                 # Child failed - deserialize and raise error
                 # **Rust Reference**: child_flow.rs lines 305-309 (ExecutionError::User)
-                from ergon.core import ChildFlowError
+                from pyergon.core import ChildFlowError
 
                 error_msg: str = pickle.loads(payload.data)
 
@@ -362,7 +362,7 @@ class PendingChild(Generic[R]):
         #
         # The executor will catch this exception and check ctx.take_suspend_reason()
         # to get the suspension details, then return Suspended(reason).
-        from ergon.executor.outcome import _SuspendExecution
+        from pyergon.executor.outcome import _SuspendExecution
         raise _SuspendExecution()
 
     def __repr__(self) -> str:

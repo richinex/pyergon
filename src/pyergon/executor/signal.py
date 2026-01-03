@@ -24,8 +24,8 @@ import asyncio
 import pickle
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
-from ergon.core import CallType, get_current_context
-from ergon.core.status import InvocationStatus
+from pyergon.core import CallType, get_current_context
+from pyergon.core.status import InvocationStatus
 
 # Global state for signal coordination
 # These are module-level to ensure visibility across all flow executions
@@ -95,7 +95,7 @@ async def await_external_signal(signal_name: str) -> bytes:
     await ctx.storage.log_signal(ctx.flow_id, current_step, signal_name)
 
     # Suspend execution
-    from ergon.executor.outcome import _SuspendExecution, SuspendReason
+    from pyergon.executor.outcome import _SuspendExecution, SuspendReason
     reason = SuspendReason(
         flow_id=ctx.flow_id,
         step=current_step,
@@ -190,7 +190,7 @@ async def await_external_signal_callable(
 
     if existing_inv and existing_inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
         # We're resuming - execute the step in Resume mode
-        from ergon.core.context import CALL_TYPE
+        from pyergon.core.context import CALL_TYPE
         token = CALL_TYPE.set(CallType.RESUME)
         try:
             result = await step_callable()
@@ -204,7 +204,7 @@ async def await_external_signal_callable(
             CALL_TYPE.reset(token)
 
     # First time calling this await - set up waiting state
-    from ergon.core.context import CALL_TYPE
+    from pyergon.core.context import CALL_TYPE
     token = CALL_TYPE.set(CallType.AWAIT)
     try:
         # Execute the step - it should return None in Await mode

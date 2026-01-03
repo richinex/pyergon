@@ -21,9 +21,9 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.executor.timer import schedule_timer_named
-from ergon.storage import InMemoryExecutionLog
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.executor.timer import schedule_timer_named
+from pyergon.storage import InMemoryExecutionLog
 
 logging.basicConfig(
     level=logging.INFO,

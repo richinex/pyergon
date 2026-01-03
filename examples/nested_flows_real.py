@@ -23,8 +23,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import List
 
-from ergon import flow, flow_type, step, Scheduler, Worker, InMemoryExecutionLog
-from ergon.core import TaskStatus
+from pyergon import flow, flow_type, step, Scheduler, Worker, InMemoryExecutionLog
+from pyergon.core import TaskStatus
 
 
 # ============================================================================

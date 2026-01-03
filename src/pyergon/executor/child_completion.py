@@ -18,9 +18,9 @@ import pickle
 import logging
 from typing import Optional
 
-from ergon.storage.base import ExecutionLog
-from ergon.executor.suspension_payload import SuspensionPayload
-from ergon.core import InvocationStatus
+from pyergon.storage.base import ExecutionLog
+from pyergon.executor.suspension_payload import SuspensionPayload
+from pyergon.core import InvocationStatus
 
 logger = logging.getLogger(__name__)
 

@@ -42,9 +42,9 @@ PYTHONPATH=src python examples/dag_limit_parallel.py
 
 import asyncio
 from dataclasses import dataclass
-from ergon import flow, flow_type, step, dag, Executor
-from ergon.executor.outcome import Completed
-from ergon.storage.memory import InMemoryExecutionLog
+from pyergon import flow, flow_type, step, dag, Executor
+from pyergon.executor.outcome import Completed
+from pyergon.storage.memory import InMemoryExecutionLog
 
 
 @dataclass

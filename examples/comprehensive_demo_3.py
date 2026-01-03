@@ -24,10 +24,10 @@ import uuid
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.core import RetryPolicy, TaskStatus
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.executor.timer import schedule_timer_named
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.executor.timer import schedule_timer_named
 
 # Suppress worker logging for clean output (like Rust tracing::debug!)
 logging.basicConfig(level=logging.CRITICAL)
@@ -178,7 +178,7 @@ class OrderFlow:
 
         **Rust Reference**: run_validations() lines 109-116
         """
-        from ergon.executor.dag_runtime import dag
+        from pyergon.executor.dag_runtime import dag
 
         return await dag(
             self,

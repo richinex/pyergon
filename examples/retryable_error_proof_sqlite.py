@@ -32,9 +32,9 @@ PYTHONPATH=src python examples/retryable_error_proof_sqlite.py
 
 import asyncio
 from dataclasses import dataclass
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.core import RetryPolicy, RetryableError, TaskStatus
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.core import RetryPolicy, RetryableError, TaskStatus
 
 # Global counters - this is our EVIDENCE
 STEP_A_EXECUTIONS = 0

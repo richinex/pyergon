@@ -22,11 +22,11 @@ from typing import Optional
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from ergon.core import get_current_call_type, CallType
-from ergon.storage import InMemoryExecutionLog
-from ergon.executor import Executor
-from ergon.executor.signal import await_external_signal, signal_resume
-from ergon.decorators import flow, step
+from pyergon.core import get_current_call_type, CallType
+from pyergon.storage import InMemoryExecutionLog
+from pyergon.executor import Executor
+from pyergon.executor.signal import await_external_signal, signal_resume
+from pyergon.decorators import flow, step
 
 
 @flow

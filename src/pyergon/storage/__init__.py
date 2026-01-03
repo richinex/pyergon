@@ -15,14 +15,14 @@ Design Principle: Dependency Inversion (SOLID)
 Clients depend on ExecutionLog abstraction, not concrete implementations.
 """
 
-from ergon.storage.base import (
+from pyergon.storage.base import (
     ExecutionLog,
     WorkNotificationSource,
     TimerNotificationSource,
 )
-from ergon.storage.sqlite import SqliteExecutionLog
-from ergon.storage.redis import RedisExecutionLog
-from ergon.storage.memory import InMemoryExecutionLog
+from pyergon.storage.sqlite import SqliteExecutionLog
+from pyergon.storage.redis import RedisExecutionLog
+from pyergon.storage.memory import InMemoryExecutionLog
 
 __all__ = [
     "ExecutionLog",

@@ -13,11 +13,11 @@ from uuid import uuid4
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ergon.core import Invocation, InvocationStatus, RetryPolicy
-from ergon.storage import InMemoryExecutionLog, SqliteExecutionLog
-from ergon.decorators import flow, flow_type, step
-from ergon.executor import Executor, Completed, Suspended
-from ergon.executor.scheduler import Scheduler
+from pyergon.core import Invocation, InvocationStatus, RetryPolicy
+from pyergon.storage import InMemoryExecutionLog, SqliteExecutionLog
+from pyergon.decorators import flow, flow_type, step
+from pyergon.executor import Executor, Completed, Suspended
+from pyergon.executor.scheduler import Scheduler
 
 
 # ==============================================================================
@@ -118,7 +118,7 @@ async def test_flow_queue_persists(temp_db_path):
     await storage2.connect()
 
     # Dequeue - should find the flow
-    from ergon.executor.worker import Worker
+    from pyergon.executor.worker import Worker
     worker = Worker(storage2, worker_id="test_worker")
 
     scheduled_flow = await storage2.dequeue_flow("test_worker")
@@ -344,7 +344,7 @@ async def test_suspended_flow_resumes_after_restart(temp_db_path):
     )
 
     # Mark as waiting for signal
-    from ergon.executor.signal import await_external_signal
+    from pyergon.executor.signal import await_external_signal
     # Store suspension state
     await storage.log_signal(flow_id, step=0, signal_name=signal_name)
 
@@ -365,7 +365,7 @@ async def test_suspended_flow_resumes_after_restart(temp_db_path):
     assert inv2.status == InvocationStatus.WAITING_FOR_SIGNAL
 
     # Deliver signal after restart
-    from ergon.executor.suspension_payload import SuspensionPayload
+    from pyergon.executor.suspension_payload import SuspensionPayload
     payload = SuspensionPayload(success=True, data=pickle.dumps("signal_result"))
 
     await storage2.store_suspension_result(

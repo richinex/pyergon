@@ -14,9 +14,9 @@ import pytest
 from dataclasses import dataclass
 from uuid import uuid4, UUID
 
-from ergon.decorators import flow, flow_type, step
-from ergon.executor import Executor
-from ergon.executor.outcome import (
+from pyergon.decorators import flow, flow_type, step
+from pyergon.executor import Executor
+from pyergon.executor.outcome import (
     FlowOutcome,
     Completed,
     Suspended,
@@ -24,9 +24,9 @@ from ergon.executor.outcome import (
     is_completed,
     is_suspended
 )
-from ergon.executor.signal import await_external_signal
-from ergon.executor.timer import schedule_timer
-from ergon.storage.memory import InMemoryExecutionLog
+from pyergon.executor.signal import await_external_signal
+from pyergon.executor.timer import schedule_timer
+from pyergon.storage.memory import InMemoryExecutionLog
 
 
 # =============================================================================

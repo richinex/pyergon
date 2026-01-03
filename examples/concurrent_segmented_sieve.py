@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from typing import List
 
-from ergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
+from pyergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
 
 # =============================================================================
 # GLOBAL CONFIG

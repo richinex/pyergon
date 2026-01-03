@@ -21,8 +21,8 @@ import uuid
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from ergon import flow, flow_type, step, Scheduler, Worker
-from ergon.storage.sqlite import SqliteExecutionLog
+from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 def ts() -> str:

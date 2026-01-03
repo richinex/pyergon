@@ -79,7 +79,7 @@ class InvokableFlow(Protocol[Output]):
     Example:
         ```python
         from dataclasses import dataclass
-        from ergon import flow, InvokableFlow
+        from pyergon import flow, InvokableFlow
 
         @dataclass
         class ShippingLabel:

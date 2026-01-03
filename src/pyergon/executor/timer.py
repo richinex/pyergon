@@ -53,7 +53,7 @@ from datetime import datetime, timedelta
 # From Dave Cheney: "Avoid package level state"
 # Context is managed by core/context.py using EXECUTION_CONTEXT ContextVar
 
-from ergon.core import get_current_context as get_execution_context
+from pyergon.core import get_current_context as get_execution_context
 
 def get_current_context():
     """
@@ -144,8 +144,8 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             await schedule_timer_named(3.0, "warehouse-processing")
             print("Warehouse processing complete")
     """
-    from ergon.core.status import InvocationStatus
-    from ergon.executor.outcome import SuspendReason, _SuspendExecution
+    from pyergon.core.status import InvocationStatus
+    from pyergon.executor.outcome import SuspendReason, _SuspendExecution
 
     # Get current flow context
     ctx = get_current_context()
