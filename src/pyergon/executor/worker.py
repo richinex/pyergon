@@ -37,6 +37,14 @@ from typing import Any, Generic, TypeVar
 from uuid import UUID
 
 from pyergon.core import ScheduledFlow
+from pyergon.executor.execution import (
+    handle_flow_completion,
+    handle_flow_error,
+    handle_suspended_flow,
+)
+from pyergon.executor.instance import Executor
+from pyergon.executor.outcome import Completed, Suspended
+from pyergon.storage import TimerNotificationSource, WorkNotificationSource
 from pyergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
@@ -107,9 +115,6 @@ class Registry(Generic[S]):
             registry.register(HolidaySaga, lambda saga: saga.run_saga())
             registry.register(OrderFlow, lambda flow: flow.process())
         """
-        from pyergon.executor.instance import Executor
-        from pyergon.executor.outcome import Completed
-
         # Get stable type ID (Rust uses T::type_id())
         # Python @flow decorator adds type_id() method
         if hasattr(flow_class, "type_id"):
@@ -261,8 +266,6 @@ class Worker:
         # Event-driven notification support (runtime protocol checking)
         # From Rust: Worker requires WorkNotificationSource at compile time via trait bounds
         # Python: Runtime isinstance() check provides flexibility
-        from pyergon.storage import TimerNotificationSource, WorkNotificationSource
-
         self._supports_work_notifications = isinstance(storage, WorkNotificationSource)
         self._supports_timer_notifications = isinstance(storage, TimerNotificationSource)
 
@@ -530,8 +533,6 @@ class Worker:
                     # Store timer result (marks timer as fired)
                     # **Rust Reference**: lines 82-112
                     # Use same payload structure as signals/child flows
-                    import pickle
-
                     payload = {
                         "success": True,
                         "data": b"",  # Empty - timer doesn't carry data
@@ -727,13 +728,6 @@ class Worker:
         From Dave Cheney: "Only handle an error once"
         Error handling is delegated to execution.handle_flow_error().
         """
-        from pyergon.executor.execution import (
-            handle_flow_completion,
-            handle_flow_error,
-            handle_suspended_flow,
-        )
-        from pyergon.executor.outcome import Completed, Suspended
-
         try:
             # Get executor from registry (Rust lines 1026-1029)
             executor = self._registry.get_executor(scheduled_flow.flow_type)
