@@ -257,4 +257,3 @@ class TimerError(Exception):
     """
 
     pass
-
