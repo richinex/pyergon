@@ -258,10 +258,3 @@ class TimerError(Exception):
 
     pass
 
-
-# ========================================================================
-# Type Stub for FlowContext (avoid circular import)
-# ========================================================================
-
-# ExecutionContext from core/execution_context.py provides all needed functionality
-# No Protocol stub needed - we import get_current_context directly from core

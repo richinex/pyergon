@@ -423,20 +423,20 @@ class Worker:
         """
         Main worker loop with event-driven timer processing.
 
-        **Rust Reference**: `src/executor/worker.rs` lines 815-920
+        **Rust Reference**: `src/executor/worker.rs` lines 880-963
 
         From Software Design Patterns (Chapter 8):
         Template Method Pattern - fixed algorithm skeleton with variation points.
 
-        This loop:
-        1. Processes expired timers (if enabled)
-        2. Processes one flow from queue
-        3. Calculates dynamic sleep based on next timer fire time
-        4. Sleeps until MIN(poll_interval, next_timer)
-
         Event-Driven Design:
-        Instead of fixed poll_interval sleep, we sleep until the next timer fires.
-        This reduces latency for timer-based workflows while maintaining efficiency.
+        Uses asyncio.wait_for() to sleep until next timer expires OR timer_notify signals.
+        This matches Rust's tokio::select! pattern for efficient timer processing.
+
+        Loop structure:
+        1. Process signals (if enabled)
+        2. Process flows from queue (event-driven via work_notify)
+        3. If got flow, loop immediately
+        4. If no flow, wait on timer (event-driven via timer_notify)
         """
         logger.info(f"Worker {self._worker_id} started")
 
@@ -445,19 +445,14 @@ class Worker:
                 try:
                     logger.debug(f"Worker {self._worker_id}: Loop iteration starting")
 
-                    # HOOK 1: Process expired timers (if enabled)
-                    # From Rust lines 876-900
-                    if self._enable_timers:
-                        await self._process_timers()
-
-                    # HOOK 2: Process external signals (if enabled)
+                    # HOOK 1: Process external signals (if enabled)
                     # From Rust: signal.rs process_signals()
                     if self._signal_source is not None:
                         await self._process_signals()
 
-                    # HOOK 3: Process one flow from queue
+                    # HOOK 2: Process one flow from queue
                     # **Rust Pattern**: After successfully dequeuing, immediately loop again!
-                    # Only sleep when queue is empty (got_flow=False)
+                    # Only wait when queue is empty (got_flow=False)
                     got_flow = await self._process_flow()
                     logger.debug(
                         f"Worker {self._worker_id}: _process_flow() returned got_flow={got_flow}"
@@ -471,17 +466,15 @@ class Worker:
                         )
                         continue  # Skip waiting, go directly to next iteration
 
-                    # No flow found - _process_flow() already waited on work_notify
-                    # Just loop immediately to check timers/signals/flows again
-                    # From Rust: select! continuously loops, all waiting is event-driven (no sleep!)
-                    logger.debug(
-                        f"Worker {self._worker_id}: No flow, looping to check timers/signals/flows"
-                    )
+                    # HOOK 3: Event-driven timer wait (if timers enabled)
+                    # **Rust Reference**: lines 880-963
+                    # No flow found - wait for timer event or timeout
+                    if self._enable_timers:
+                        await self._wait_for_timer()
 
                 except Exception as e:
                     logger.error(f"Worker {self._worker_id} error: {e}")
-                    # Continue running despite errors - loop immediately
-                    # Waiting happens in _process_flow() via event notifications
+                    # Continue running despite errors
 
             logger.info(
                 f"Worker {self._worker_id}: Exiting main loop "
@@ -493,6 +486,87 @@ class Worker:
     # ====================================================================
     # Hooks - Variation Points
     # ====================================================================
+
+    async def _wait_for_timer(self) -> None:
+        """
+        Event-driven timer wait - sleeps until next timer fires OR new timer scheduled.
+
+        **Rust Reference**: `src/executor/worker.rs` lines 889-963
+
+        Rust uses tokio::select! to wait on:
+        1. timer_sleep - sleeps until next_timer_wake
+        2. timer_notified - wakes when new timer is scheduled
+
+        Python equivalent uses asyncio.wait_for():
+        - Timeout = time until next timer fires
+        - Event = timer_notify (signals new timer scheduled)
+
+        This is more efficient than polling - worker only wakes when needed.
+        """
+        try:
+            if self._supports_timer_notifications:
+                # Event-driven path (like Rust tokio::select!)
+                # **Rust Reference**: lines 889-963
+                next_fire = await self._storage.get_next_timer_fire_time()
+
+                if next_fire is None:
+                    # No timers - sleep forever until notified
+                    # **Rust Reference**: line 895 (std::future::pending())
+                    logger.debug(f"Worker {self._worker_id}: No timers, waiting for notification")
+                    try:
+                        await self._timer_notify.wait()
+                        self._timer_notify.clear()
+                        logger.debug(f"Worker {self._worker_id}: Timer notification received")
+                    except Exception:
+                        pass  # Shutdown or error
+                    return
+
+                # Calculate timeout until next timer fires
+                now = datetime.now()
+                if next_fire <= now:
+                    # Timer already expired - process immediately
+                    # **Rust Reference**: lines 950-951
+                    logger.debug(f"Worker {self._worker_id}: Timer already expired, processing")
+                    await self._process_timers()
+                    return
+
+                # Sleep until timer fires OR notification
+                # **Rust Reference**: lines 890-896, 900, 902
+                timeout_seconds = (next_fire - now).total_seconds()
+                logger.debug(
+                    f"Worker {self._worker_id}: "
+                    f"Waiting {timeout_seconds:.2f}s for timer or notification"
+                )
+
+                try:
+                    # Wait for either:
+                    # 1. Timeout (timer expired) - like Rust timer_sleep future
+                    # 2. Event (new timer) - like Rust timer_notified future
+                    await asyncio.wait_for(self._timer_notify.wait(), timeout=timeout_seconds)
+                    self._timer_notify.clear()
+                    logger.debug(
+                        f"Worker {self._worker_id}: "
+                        "Woke from timer notification (new timer scheduled)"
+                    )
+                except asyncio.TimeoutError:
+                    # Timeout - timer expired
+                    # **Rust Reference**: line 934 (timer_sleep matched)
+                    logger.debug(
+                        f"Worker {self._worker_id}: Timer expired after {timeout_seconds:.2f}s"
+                    )
+
+                # Process any expired timers
+                # **Rust Reference**: line 939
+                await self._process_timers()
+
+            else:
+                # Polling mode - no timer notifications available
+                # Fall back to periodic polling with timer_interval
+                await asyncio.sleep(self._timer_interval)
+                await self._process_timers()
+
+        except Exception as e:
+            logger.error(f"Worker {self._worker_id} timer wait error: {e}")
 
     async def _process_timers(self) -> None:
         """

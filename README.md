@@ -5,9 +5,9 @@ Pure Python implementation of durable execution with Temporal-like semantics.
 ## Features
 
 - **Durable Steps**: Automatically cached and retried on failure
-- **Durable Timers**: Timers survive process restarts
+- **Durable Timers**: Event-driven timers survive process restarts
 - **Distributed Workers**: Multiple workers process flows from shared queue
-- **Event-Driven Notifications**: Workers wake immediately when new work arrives
+- **Event-Driven Architecture**: Workers wake on events (new work, timer expiry, new timer)
 - **Storage Backends**: SQLite, Redis, and in-memory implementations
 
 ## Design Philosophy
@@ -167,9 +167,6 @@ asyncio.run(main())
 ## Examples
 
 See `examples/` directory for complete examples:
-- **simple_timer_sqlite.py** - Durable timers with SQLite
-- **complex_multi_worker_load_sqlite.py** - Multi-worker stress test
-- **dag_limit_parallel.py** - Parallel DAG execution
 
 ```bash
 PYTHONPATH=src uv run python examples/simple_timer_sqlite.py
