@@ -548,7 +548,7 @@ class Worker:
                         f"Worker {self._worker_id}: "
                         "Woke from timer notification (new timer scheduled)"
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Timeout - timer expired
                     # **Rust Reference**: line 934 (timer_sleep matched)
                     logger.debug(
