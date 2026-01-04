@@ -6,8 +6,8 @@ Pure Python implementation of durable execution with Temporal-like semantics.
 
 - **Durable Steps**: Automatically cached and retried on failure
 - **Durable Timers**: Timers survive process restarts
-- **Distributed Workers**: Multiple workers process flows in parallel
-- **Work Stealing**: Fair load distribution across workers
+- **Distributed Workers**: Multiple workers process flows from shared queue
+- **Event-Driven Notifications**: Workers wake immediately when new work arrives
 - **Storage Backends**: SQLite, Redis, and in-memory implementations
 
 ## Design Philosophy
