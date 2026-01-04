@@ -15,12 +15,11 @@ Demonstrates:
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Dict
 import threading
+from dataclasses import dataclass
 
-from pyergon import flow, flow_type, Scheduler, Worker
-from pyergon.core import TaskStatus, RetryPolicy
+from pyergon import Scheduler, Worker, flow, flow_type
+from pyergon.core import RetryPolicy, TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -29,6 +28,7 @@ logging.basicConfig(level=logging.CRITICAL)
 # =============================================================================
 # CUSTOM ERROR TYPES
 # =============================================================================
+
 
 class PaymentError(Exception):
     """Base class for payment errors."""
@@ -127,12 +127,13 @@ class InvalidAddressError(ShippingError):
 # GLOBAL ATTEMPT COUNTERS
 # =============================================================================
 
+
 class AttemptCounter:
     """Thread-safe attempt counter for simulating transient failures."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._counters: Dict[str, int] = {}
+        self._counters: dict[str, int] = {}
 
     def increment(self, key: str) -> int:
         """Increment and return the attempt count for a key."""
@@ -154,6 +155,7 @@ SHIPPING_ATTEMPTS = AttemptCounter()
 # FLOWS
 # =============================================================================
 
+
 @dataclass
 @flow_type
 class PaymentFlow:
@@ -162,6 +164,7 @@ class PaymentFlow:
 
     **Rust Reference**: PaymentFlow struct in custom_error_boxed.rs lines 69-106
     """
+
     order_id: str
     amount: float
     simulate_error: str
@@ -198,6 +201,7 @@ class ShippingFlow:
 
     **Rust Reference**: ShippingFlow struct in custom_error_boxed.rs lines 108-141
     """
+
     order_id: str
     item_id: str
     simulate_error: str
@@ -228,6 +232,7 @@ class ShippingFlow:
 # MAIN EXECUTION
 # =============================================================================
 
+
 async def main():
     """
     Main test execution.
@@ -249,53 +254,34 @@ async def main():
     # Schedule payment flows with different error scenarios
     PAYMENT_ATTEMPTS.reset("ORD-001")
     task_id = await scheduler.schedule(
-        PaymentFlow(
-            order_id="ORD-001",
-            amount=99.99,
-            simulate_error="network_timeout"
-        )
+        PaymentFlow(order_id="ORD-001", amount=99.99, simulate_error="network_timeout")
     )
     task_ids.append(("Network timeout (retryable)", task_id))
 
     PAYMENT_ATTEMPTS.reset("ORD-002")
     task_id = await scheduler.schedule(
-        PaymentFlow(
-            order_id="ORD-002",
-            amount=150.00,
-            simulate_error="insufficient_funds"
-        )
+        PaymentFlow(order_id="ORD-002", amount=150.00, simulate_error="insufficient_funds")
     )
     task_ids.append(("Insufficient funds (permanent)", task_id))
 
     # Schedule shipping flows with different error scenarios
     SHIPPING_ATTEMPTS.reset("ORD-003")
     task_id = await scheduler.schedule(
-        ShippingFlow(
-            order_id="ORD-003",
-            item_id="ITEM-123",
-            simulate_error="warehouse_timeout"
-        )
+        ShippingFlow(order_id="ORD-003", item_id="ITEM-123", simulate_error="warehouse_timeout")
     )
     task_ids.append(("Warehouse timeout (retryable)", task_id))
 
     SHIPPING_ATTEMPTS.reset("ORD-004")
     task_id = await scheduler.schedule(
-        ShippingFlow(
-            order_id="ORD-004",
-            item_id="ITEM-456",
-            simulate_error="out_of_stock"
-        )
+        ShippingFlow(order_id="ORD-004", item_id="ITEM-456", simulate_error="out_of_stock")
     )
     task_ids.append(("Out of stock (permanent)", task_id))
 
     # Wait for all tasks to complete
     status_notify = storage.status_notify()
     try:
-        await asyncio.wait_for(
-            _wait_for_completion(storage, task_ids, status_notify),
-            timeout=15.0
-        )
-    except asyncio.TimeoutError:
+        await asyncio.wait_for(_wait_for_completion(storage, task_ids, status_notify), timeout=15.0)
+    except TimeoutError:
         print("WARNING: Timeout waiting for completions")
 
     # Print results

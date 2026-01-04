@@ -42,7 +42,8 @@ PYTHONPATH=src python examples/dag_limit_parallel.py
 
 import asyncio
 from dataclasses import dataclass
-from pyergon import flow, flow_type, step, dag, Executor
+
+from pyergon import Executor, dag, flow, flow_type, step
 from pyergon.executor.outcome import Completed
 from pyergon.storage.memory import InMemoryExecutionLog
 
@@ -51,6 +52,7 @@ from pyergon.storage.memory import InMemoryExecutionLog
 @flow_type
 class ComplexDagParallel:
     """Complex DAG with parallel execution of independent steps."""
+
     id: str
 
     # =========================================================================
@@ -87,7 +89,7 @@ class ComplexDagParallel:
     # Level 2: Compute (parallel - mul_2/mul_3 depend on fetch_a, square/cube depend on fetch_b)
     # =========================================================================
 
-    @step(depends_on=["fetch_a"], inputs={'a': 'fetch_a'})
+    @step(depends_on=["fetch_a"], inputs={"a": "fetch_a"})
     async def mul_2(self, a: int) -> int:
         """Multiply A by 2."""
         print("[L2] mul_2 starting")
@@ -96,7 +98,7 @@ class ComplexDagParallel:
         print(f"[L2] mul_2 = {a} × 2 = {result}")
         return result
 
-    @step(depends_on=["fetch_a"], inputs={'a': 'fetch_a'})
+    @step(depends_on=["fetch_a"], inputs={"a": "fetch_a"})
     async def mul_3(self, a: int) -> int:
         """Multiply A by 3."""
         print("[L2] mul_3 starting")
@@ -105,7 +107,7 @@ class ComplexDagParallel:
         print(f"[L2] mul_3 = {a} × 3 = {result}")
         return result
 
-    @step(depends_on=["fetch_b"], inputs={'b': 'fetch_b'})
+    @step(depends_on=["fetch_b"], inputs={"b": "fetch_b"})
     async def square(self, b: int) -> int:
         """Square B."""
         print("[L2] square starting")
@@ -114,7 +116,7 @@ class ComplexDagParallel:
         print(f"[L2] square = {b}² = {result}")
         return result
 
-    @step(depends_on=["fetch_b"], inputs={'b': 'fetch_b'})
+    @step(depends_on=["fetch_b"], inputs={"b": "fetch_b"})
     async def cube(self, b: int) -> int:
         """Cube B."""
         print("[L2] cube starting")
@@ -127,10 +129,7 @@ class ComplexDagParallel:
     # Level 3: Cross-branch multiplication
     # =========================================================================
 
-    @step(
-        depends_on=["mul_3", "square"],
-        inputs={'m': 'mul_3', 's': 'square'}
-    )
+    @step(depends_on=["mul_3", "square"], inputs={"m": "mul_3", "s": "square"})
     async def cross_mul(self, m: int, s: int) -> int:
         """Cross multiply."""
         print("[L3] cross_mul starting")
@@ -143,10 +142,7 @@ class ComplexDagParallel:
     # Level 4: Cross-branch addition
     # =========================================================================
 
-    @step(
-        depends_on=["cross_mul", "square"],
-        inputs={'cm': 'cross_mul', 's': 'square'}
-    )
+    @step(depends_on=["cross_mul", "square"], inputs={"cm": "cross_mul", "s": "square"})
     async def cross_add(self, cm: int, s: int) -> int:
         """Cross add."""
         print("[L4] cross_add starting")
@@ -161,7 +157,7 @@ class ComplexDagParallel:
 
     @step(
         depends_on=["cross_mul", "cross_add", "cube"],
-        inputs={'cm': 'cross_mul', 'ca': 'cross_add', 'c': 'cube'}
+        inputs={"cm": "cross_mul", "ca": "cross_add", "c": "cube"},
     )
     async def aggregate(self, cm: int, ca: int, c: int) -> int:
         """Aggregate cross operations."""
@@ -175,7 +171,7 @@ class ComplexDagParallel:
     # Level 6: Final
     # =========================================================================
 
-    @step(depends_on=["mul_2", "aggregate"], inputs={'m2': 'mul_2', 'agg': 'aggregate'})
+    @step(depends_on=["mul_2", "aggregate"], inputs={"m2": "mul_2", "agg": "aggregate"})
     async def final_result(self, m2: int, agg: int) -> int:
         """Final result."""
         print("[L6] final starting")
@@ -194,7 +190,7 @@ class ComplexDagParallel:
 
         Both auto-wire dependencies and execute independent steps in parallel.
         """
-        return await dag(self, final_step='final_result')
+        return await dag(self, final_step="final_result")
 
 
 async def main():
@@ -212,11 +208,7 @@ async def main():
     workflow = ComplexDagParallel(id="complex_parallel")
 
     # Match Rust pattern: Executor.new() + execute()
-    executor = Executor(
-        flow=workflow,
-        storage=storage,
-        flow_id="parallel-dag-001"
-    )
+    executor = Executor(flow=workflow, storage=storage, flow_id="parallel-dag-001")
 
     start_time = time.time()
     outcome = await executor.execute(lambda w: w.run())
@@ -230,7 +222,7 @@ async def main():
     if isinstance(outcome, Completed):
         result = outcome.result
         print(f"Final result: {result}")
-        print(f"Expected:     1670")
+        print("Expected:     1670")
         print(f"Match:        {'PASS' if result == 1670 else 'FAIL'}")
         print(f"Elapsed:      {elapsed:.2f}s (expected ~0.35s for 7 levels × 50ms)")
         print()
@@ -243,7 +235,7 @@ async def main():
         print("  Level 5: 1 step  (aggregate)")
         print("  Level 6: 1 step  (final_result)")
         print()
-        print(f"vs. Sequential: ~0.55s (11 steps × 50ms)")
+        print("vs. Sequential: ~0.55s (11 steps × 50ms)")
         print(f"Speedup: {0.55 / elapsed:.1f}x")
 
         assert result == 1670, f"Expected 1670, got {result}"

@@ -1,20 +1,7 @@
-"""
-Core types for ergon durable execution framework.
+"""Core types and protocols for durable execution.
 
-This module contains the fundamental types used throughout ergon:
-- Invocation: Represents a single step execution
-- InvocationStatus: Step execution state
-- CallType: Execution mode (Run, Await, Resume)
-- Context: Task-local execution state
-- FlowType: Protocol for stable type identification
-- RetryPolicy: Retry configuration for steps
-- RetryableError: Base class for errors with retry control
-- ScheduledFlow: Represents a queued flow task
-- TaskStatus: Queue task status
-- TimerInfo: Information about an expired timer
-- ChildFlowError: Exception raised when child flow fails (preserves retryability)
-
-RUST COMPLIANCE: Matches Rust ergon src/core mod.rs exports
+Fundamental types used throughout PyErgon for workflow execution,
+state management, and type identification.
 """
 
 from pyergon.core.call_type import CallType

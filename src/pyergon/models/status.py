@@ -1,53 +1,35 @@
-"""
-Status enums for ergon execution tracking.
+"""Status enumerations for workflow execution tracking.
 
-Following Dave Cheney's principle: "Make zero values useful"
-The default status should represent the initial state.
+Defines lifecycle states for individual step invocations and
+queued flow tasks in the distributed work system.
 """
 
 from enum import Enum
 
 
 class InvocationStatus(Enum):
-    """
-    Status of a step invocation.
-
-    RUST COMPLIANCE: Matches Rust InvocationStatus exactly (src/core/invocation.rs:11-16)
-    No FAILED status - failures are represented as COMPLETE with error in return_value.
+    """Status of a single step invocation.
 
     Lifecycle:
-    PENDING → WAITING_FOR_TIMER/WAITING_FOR_SIGNAL → COMPLETE
+        PENDING → WAITING_FOR_TIMER/WAITING_FOR_SIGNAL → COMPLETE
 
-    Design: Simple state machine with clear transitions
+    Design: No FAILED Status
+        Failures are represented as COMPLETE with the error stored in
+        return_value. This allows retry logic to distinguish between
+        retryable and non-retryable errors via the is_retryable field.
     """
 
     PENDING = "PENDING"
-    """Step is queued for execution.
-
-    Rust: Pending (stored as 'PENDING' in DB)
-    """
+    """Step is queued for execution."""
 
     WAITING_FOR_SIGNAL = "WAITING_FOR_SIGNAL"
-    """Step is waiting for external signal.
-
-    Rust: WaitingForSignal (stored as 'WAITING_FOR_SIGNAL' in DB)
-    """
+    """Step is waiting for external signal."""
 
     WAITING_FOR_TIMER = "WAITING_FOR_TIMER"
-    """Step is waiting for timer to fire.
-
-    Rust: WaitingForTimer (stored as 'WAITING_FOR_TIMER' in DB)
-    """
+    """Step is waiting for timer to fire."""
 
     COMPLETE = "COMPLETE"
-    """Step completed (successfully or with error).
-
-    Rust: Complete
-
-    CRITICAL: In Rust/Python, errors are stored in return_value as serialized exceptions,
-    not as a separate FAILED status. This allows retry logic to distinguish between
-    retryable and non-retryable errors using the is_retryable field.
-    """
+    """Step completed successfully or with cached error."""
 
     @property
     def is_complete(self) -> bool:
@@ -64,50 +46,33 @@ class InvocationStatus(Enum):
 
 
 class TaskStatus(Enum):
-    """
-    Status of a scheduled flow task.
-
-    **Rust Reference**: `src/storage/queue.rs` lines 11-23
+    """Status of a queued flow task in the distributed work system.
 
     Lifecycle:
-    PENDING → RUNNING → SUSPENDED → PENDING → RUNNING → COMPLETE/FAILED
+        PENDING → RUNNING → SUSPENDED → PENDING → RUNNING → COMPLETE/FAILED
 
-    Design: Status for the distributed queue
+    Tasks can suspend when waiting for child flows, timers, or external signals,
+    then resume back to PENDING when the awaited event occurs.
     """
 
     PENDING = "PENDING"
-    """Task is queued, waiting for a worker.
-
-    Rust: Pending (stored as 'PENDING' in DB - line 29)
-    """
+    """Task is queued, waiting for a worker to claim it."""
 
     RUNNING = "RUNNING"
-    """Task is being executed by a worker.
-
-    Rust: Running (stored as 'RUNNING' in DB - line 30)
-    """
+    """Task is currently being executed by a worker."""
 
     SUSPENDED = "SUSPENDED"
-    """Task is suspended, waiting for external signal or child flow completion.
+    """Task is suspended, waiting for child flow, timer, or external signal.
 
-    Rust: Suspended (stored as 'SUSPENDED' in DB - line 31)
-
-    When a flow suspends (e.g., waiting for child flow result or external signal),
-    the worker marks it SUSPENDED. Later, when the signal arrives, resume_flow()
-    changes status back to PENDING so a worker can pick it up again.
+    When the awaited event occurs, resume_flow() changes status back
+    to PENDING so a worker can pick it up and continue execution.
     """
 
     COMPLETE = "COMPLETE"
-    """Task completed successfully.
-
-    Rust: Complete (stored as 'COMPLETE' in DB - line 32)
-    """
+    """Task completed successfully."""
 
     FAILED = "FAILED"
-    """Task failed with non-retryable error.
-
-    Rust: Failed
-    """
+    """Task failed with non-retryable error after exhausting retries."""
 
     @property
     def is_terminal(self) -> bool:

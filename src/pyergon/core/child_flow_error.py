@@ -1,13 +1,6 @@
-"""
-ChildFlowError - Exception raised when child flow fails.
+"""Exception raised when child flow fails during parent execution.
 
-**Rust Reference**: ergon_rust/ergon/src/executor/error.rs ExecutionError::User
-
-This module provides ChildFlowError, which preserves error information
-from failed child flows including the retryability flag.
-
-**Python Documentation**:
-- Exceptions: https://docs.python.org/3/library/exceptions.html
+Preserves error type, message, and retryability from the failed child flow.
 """
 
 from pyergon.models import RetryableError
@@ -16,40 +9,37 @@ __all__ = ["ChildFlowError"]
 
 
 class ChildFlowError(RetryableError):
-    """
-    Exception raised when a child flow fails.
+    """Exception raised when a child flow fails during parent execution.
 
-    **Rust Reference**: ExecutionError::User variant
+    Preserves error type, message, and retryability from the failed child,
+    allowing parent flows to handle child failures with proper retry semantics.
 
-    ```rust
-    pub enum ExecutionError {
-        User {
-            type_name: String,
-            message: String,
-            retryable: bool,
-        },
-        // ... other variants
-    }
-    ```
+    The retryability flag determines whether the parent flow should retry
+    when this error occurs.
 
-    This exception preserves the error type name, message, and retryability
-    flag from the child flow's failure. The retryability flag determines
-    whether the parent flow should retry when this error occurs.
+    Example:
+        ```python
+        # Child flow fails with permanent error
+        raise ChildFlowError(
+            type_name="ValidationError",
+            message="Invalid product ID",
+            retryable=False
+        )
+        ```
 
     Attributes:
-        type_name: The error type name from the child flow
-        message: The error message from the child flow
-        retryable: Whether this error is retryable
+        type_name: Error type name from the child flow
+        message: Error message from the child flow
+        _retryable: Whether this error should trigger retries
     """
 
     def __init__(self, type_name: str, message: str, retryable: bool):
-        """
-        Create a ChildFlowError.
+        """Create a ChildFlowError with child's error information.
 
         Args:
-            type_name: The error type name from the child flow
-            message: The error message from the child flow
-            retryable: Whether this error is retryable
+            type_name: Error type name from child flow
+            message: Error message from child flow
+            retryable: Whether parent should retry on this error
         """
         super().__init__(message)
         self.type_name = type_name
@@ -57,12 +47,7 @@ class ChildFlowError(RetryableError):
         self._retryable = retryable
 
     def is_retryable(self) -> bool:
-        """
-        Check if this error is retryable.
-
-        Returns:
-            True if the error can be retried, False otherwise
-        """
+        """Return whether parent flow should retry on this child error."""
         return self._retryable
 
     def __str__(self) -> str:

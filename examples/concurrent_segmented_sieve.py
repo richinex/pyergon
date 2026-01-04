@@ -32,15 +32,15 @@ To test with free-threading:
 
 With GIL disabled, asyncio.to_thread() should achieve near-linear speedup!
 
-**Rust Reference**: `/home/richinex/Documents/devs/rust_projects/ergon/ergon/examples/concurrent_segmented_sieve.rs`
+**Rust Reference**:
+`/home/richinex/Documents/devs/rust_projects/ergon/ergon/examples/concurrent_segmented_sieve.rs`
 """
 
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import List
 
-from pyergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
+from pyergon import InMemoryExecutionLog, Scheduler, Worker, flow, flow_type, step
 
 # =============================================================================
 # GLOBAL CONFIG
@@ -61,7 +61,8 @@ state_lock = None
 # MATH LOGIC (Pure Python)
 # =============================================================================
 
-def simple_sieve(limit: int) -> List[int]:
+
+def simple_sieve(limit: int) -> list[int]:
     """
     Standard non-concurrent Sieve to get the "Base Primes" up to sqrt(N).
     Needed to seed the segments.
@@ -85,7 +86,7 @@ def simple_sieve(limit: int) -> List[int]:
     return primes
 
 
-def calculate_segment(low: int, high: int, base_primes: List[int]) -> int:
+def calculate_segment(low: int, high: int, base_primes: list[int]) -> int:
     """
     Calculate primes in a segment [low, high).
 
@@ -146,6 +147,7 @@ def calculate_segment(low: int, high: int, base_primes: List[int]) -> int:
 # ERGON FLOW: The Segment Calculator
 # =============================================================================
 
+
 @dataclass
 @flow_type
 class PrimeSegmentFlow:
@@ -157,9 +159,10 @@ class PrimeSegmentFlow:
     Each flow instance handles one chunk (e.g., [0, 1M), [1M, 2M), etc.)
     and reports the number of primes found.
     """
+
     low: int
     high: int
-    base_primes: List[int]  # Passed in so each worker is independent
+    base_primes: list[int]  # Passed in so each worker is independent
 
     @step
     async def calculate(self) -> int:
@@ -174,12 +177,7 @@ class PrimeSegmentFlow:
         global completed_segments, total_primes_found, done_event, state_lock
 
         # Offload CPU-intensive computation to thread pool
-        count = await asyncio.to_thread(
-            calculate_segment,
-            self.low,
-            self.high,
-            self.base_primes
-        )
+        count = await asyncio.to_thread(calculate_segment, self.low, self.high, self.base_primes)
 
         # Update Global Stats (In a real app, we might write to DB)
         # Using asyncio.Lock for safe concurrent access
@@ -210,6 +208,7 @@ class PrimeSegmentFlow:
 # MAIN BENCHMARK
 # =============================================================================
 
+
 async def main():
     """
     Main benchmark orchestrator.
@@ -228,11 +227,12 @@ async def main():
 
     # Check if running in free-threaded mode
     import sys
-    gil_disabled = getattr(sys, '_is_gil_enabled', lambda: True)() == False
 
-    print("="*70)
+    gil_disabled = not getattr(sys, "_is_gil_enabled", lambda: True)()
+
+    print("=" * 70)
     print("Python Ergon Concurrent Segmented Sieve (with to_thread)")
-    print("="*70)
+    print("=" * 70)
     print(f"Python version: {sys.version.split()[0]}")
     print(f"GIL status: {'DISABLED (free-threaded)' if gil_disabled else 'ENABLED (standard)'}")
     if gil_disabled:
@@ -257,7 +257,7 @@ async def main():
 
     # 2. Pre-calculate Base Primes (Sequential Step)
     # We need primes up to sqrt(10,000,000) ~= 3162
-    sqrt_limit = int(LARGEST_PRIME ** 0.5)
+    sqrt_limit = int(LARGEST_PRIME**0.5)
     print(f"Calculating base primes up to {sqrt_limit}...")
     base_primes = await asyncio.to_thread(simple_sieve, sqrt_limit)
     print(f"Found {len(base_primes)} base primes")
@@ -272,11 +272,7 @@ async def main():
     while low < LARGEST_PRIME:
         high = min(low + SEGMENT_SIZE, LARGEST_PRIME)
 
-        flow_instance = PrimeSegmentFlow(
-            low=low,
-            high=high,
-            base_primes=base_primes
-        )
+        flow_instance = PrimeSegmentFlow(low=low, high=high, base_primes=base_primes)
 
         await scheduler.schedule(flow_instance)
         segment_count += 1
@@ -295,7 +291,7 @@ async def main():
         worker = Worker(
             storage=storage,
             worker_id=f"worker-{i}",
-            poll_interval=0.001  # 1ms, very aggressive for benchmark
+            poll_interval=0.001,  # 1ms, very aggressive for benchmark
         )
 
         # Register flow handler
@@ -323,13 +319,13 @@ async def main():
 
     # 7. Print results
     # Rust lines 200-205
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Python Ergon Concurrent Segmented Sieve")
-    print("="*60)
+    print("=" * 60)
     print(f"Computation time: {elapsed:.3f}s")
     print(f"Number of primes: {total_primes_found:,}")
     print(f"Segments processed: {completed_segments}")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":

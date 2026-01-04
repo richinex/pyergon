@@ -17,22 +17,24 @@ Usage:
 """
 
 import asyncio
-import time
 import sys
+import time
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
-from pyergon.storage.redis import RedisExecutionLog
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
+from pyergon.storage.redis import RedisExecutionLog
 
 # ============================================================================
 # PyErgon Flow Definitions
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class SimpleStepFlow:
     """Minimal flow to measure step execution overhead."""
+
     id: str
 
     @step
@@ -53,10 +55,12 @@ class SimpleStepFlow:
         v2 = await self.step2(v1)
         return await self.step3(v2)
 
+
 @dataclass
 @flow_type
 class SingleTaskFlow:
     """Single independent task for parallel execution benchmark."""
+
     id: str
 
     @step
@@ -68,9 +72,11 @@ class SingleTaskFlow:
     async def run(self) -> int:
         return await self.compute()
 
+
 # ============================================================================
 # PyErgon Benchmarks
 # ============================================================================
+
 
 async def benchmark_ergon_simple(count: int = 100) -> float:
     """
@@ -120,10 +126,11 @@ async def benchmark_ergon_simple(count: int = 100) -> float:
         # Shutdown worker
         await handle.shutdown()
 
-        print(f"  {elapsed:.3f}s ({elapsed*10:.2f}ms per workflow)")
+        print(f"  {elapsed:.3f}s ({elapsed * 10:.2f}ms per workflow)")
         return elapsed
     finally:
         await storage.close()
+
 
 async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 100) -> float:
     """Benchmark PyErgon multi-worker execution with Redis backend."""
@@ -173,10 +180,11 @@ async def benchmark_ergon_concurrent(worker_count: int = 3, flow_count: int = 10
         for handle in handles:
             await handle.shutdown()
 
-        print(f"  {elapsed:.3f}s ({elapsed*10:.2f}ms per workflow)")
+        print(f"  {elapsed:.3f}s ({elapsed * 10:.2f}ms per workflow)")
         return elapsed
     finally:
         await storage.close()
+
 
 async def benchmark_ergon_parallel(count: int = 50) -> float:
     """
@@ -233,20 +241,23 @@ async def benchmark_ergon_parallel(count: int = 50) -> float:
         for handle in handles:
             await handle.shutdown()
 
-        print(f"  {elapsed:.3f}s ({elapsed*20:.2f}ms per workflow)")
+        print(f"  {elapsed:.3f}s ({elapsed * 20:.2f}ms per workflow)")
         return elapsed
     finally:
         await storage.close()
+
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
+
 def check_redis_connection():
     """Check if Redis is running."""
     import redis as redis_client
+
     try:
-        r = redis_client.Redis(host='localhost', port=6379, db=0)
+        r = redis_client.Redis(host="localhost", port=6379, db=0)
         r.ping()
         print("✓ Redis connection successful")
         return True
@@ -256,39 +267,42 @@ def check_redis_connection():
         print("    redis-server")
         return False
 
+
 # ============================================================================
 # Main Benchmark Runner
 # ============================================================================
 
+
 async def main():
     """Run all PyErgon benchmarks."""
-    print("="*80)
+    print("=" * 80)
     print("PyErgon Benchmark")
-    print("="*80)
+    print("=" * 80)
 
     if not check_redis_connection():
         sys.exit(1)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
 
     results = {}
 
     print("\n[1/3] Simple Sequential Execution")
-    results['simple'] = await benchmark_ergon_simple(100)
+    results["simple"] = await benchmark_ergon_simple(100)
 
     print("\n[2/3] Multi-Worker Concurrent")
-    results['concurrent'] = await benchmark_ergon_concurrent(3, 100)
+    results["concurrent"] = await benchmark_ergon_concurrent(3, 100)
 
     print("\n[3/3] Parallel Task Execution")
-    results['parallel'] = await benchmark_ergon_parallel(50)
+    results["parallel"] = await benchmark_ergon_parallel(50)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("SUMMARY")
-    print("="*80)
+    print("=" * 80)
     print(f"\nSimple execution:  {results['simple']:.3f}s")
     print(f"Multi-worker:      {results['concurrent']:.3f}s")
     print(f"Parallel:          {results['parallel']:.3f}s")
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
+
 
 if __name__ == "__main__":
     try:

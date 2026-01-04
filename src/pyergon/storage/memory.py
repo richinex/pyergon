@@ -1,13 +1,9 @@
-"""
-In-memory storage implementation for pyergon.
+"""In-memory storage implementation for pyergon.
 
 Design Pattern: Adapter Pattern
 InMemoryExecutionLog adapts in-memory dictionaries to ExecutionLog interface.
 
-RUST COMPLIANCE: Matches Rust ergon InMemoryExecutionLog exactly.
-
-From Dave Cheney:
-"Make the zero value useful" - Instance is immediately usable after __init__.
+Instance is immediately usable after __init__.
 """
 
 from __future__ import annotations
@@ -29,22 +25,17 @@ from pyergon.storage.base import ExecutionLog, StorageError
 
 
 class InMemoryExecutionLog(ExecutionLog):
-    """
-    In-memory storage for testing.
+    """In-memory storage for testing.
 
-    Design: Liskov Substitution (SOLID)
     Can be substituted for SqliteExecutionLog without changing client code.
 
     Usage:
-        storage = InMemoryExecutionLog()  # Ready to use!
+        storage = InMemoryExecutionLog()
         await storage.log_invocation_start(...)
     """
 
     def __init__(self):
-        """
-        Initialize in-memory storage with notification support.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 49-59
+        """Initialize in-memory storage with notification support.
 
         Creates notification events for:
         - work_notify: Wake workers when work becomes available
@@ -65,7 +56,6 @@ class InMemoryExecutionLog(ExecutionLog):
         self._lock = asyncio.Lock()
 
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
-        # From Rust: work_notify: Arc<Notify>, timer_notify: Arc<Notify>
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
         self._status_notify = asyncio.Event()
@@ -73,10 +63,6 @@ class InMemoryExecutionLog(ExecutionLog):
     def __repr__(self) -> str:
         """Return string representation of storage instance."""
         return "InMemoryExecutionLog"
-
-    # ========================================================================
-    # Invocation Operations
-    # ========================================================================
 
     async def log_invocation_start(
         self,
@@ -89,10 +75,7 @@ class InMemoryExecutionLog(ExecutionLog):
         delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
-        """
-        Record the start of a step execution.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 95-134
+        """Record the start of a step execution.
 
         This method checks if an invocation already exists:
         - If COMPLETE: skip, don't overwrite cached result
@@ -104,7 +87,6 @@ class InMemoryExecutionLog(ExecutionLog):
 
             # Check if invocation already exists and skip if Complete,
             # WaitingForSignal, or WaitingForTimer
-            # From Rust lines 123-130
             if key in self._invocations:
                 existing = self._invocations[key]
                 if existing.status == InvocationStatus.COMPLETE:
@@ -231,18 +213,11 @@ class InMemoryExecutionLog(ExecutionLog):
                 )
                 self._invocations[key] = updated
 
-    # ========================================================================
-    # Queue Operations
-    # ========================================================================
-
     async def enqueue_flow(self, flow: ScheduledFlow) -> str:
-        """
-        Add a flow to the distributed work queue.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 259-311
+        """Add a flow to the distributed work queue.
 
         Accepts a complete ScheduledFlow object which includes parent_metadata
-        for child flow invocation (Level 3 API).
+        for child flow invocation.
         """
         async with self._lock:
             # Store the flow object directly
@@ -250,7 +225,6 @@ class InMemoryExecutionLog(ExecutionLog):
             self._scheduled_flows[flow.task_id] = flow
 
             # Wake up one waiting worker if this is an immediate (non-delayed) flow
-            # From Rust lines 307-309
             if flow.scheduled_for is None:
                 self._work_notify.set()
                 self._work_notify.clear()  # Reset for next notification
@@ -258,10 +232,7 @@ class InMemoryExecutionLog(ExecutionLog):
             return flow.task_id
 
     async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
-        """
-        Claim and retrieve a pending flow from queue.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 314-361
+        """Claim and retrieve a pending flow from queue.
 
         Only dequeues flows that are:
         1. Status == PENDING
@@ -304,17 +275,12 @@ class InMemoryExecutionLog(ExecutionLog):
     async def complete_flow(
         self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
-        """
-        Update flow task status.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 346-358
+        """Update flow task status.
 
         Despite the name "complete_flow", this method updates the status to ANY value,
         including SUSPENDED (not just terminal states). The name comes from the most
         common use case (marking flows COMPLETE/FAILED), but it's actually a general
         status update method.
-
-        From Rust line 348: entry.status = status  (no validation)
 
         Args:
             task_id: The task identifier
@@ -352,15 +318,11 @@ class InMemoryExecutionLog(ExecutionLog):
             self._scheduled_flows[task_id] = updated
 
             # Notify any waiters that a flow status changed
-            # From Rust lines 354-356
             self._status_notify.set()
             self._status_notify.clear()  # Reset for next notification
 
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
-        """
-        Reschedule a failed flow for retry after a delay.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 364-401
+        """Reschedule a failed flow for retry after a delay.
 
         This method:
         1. Increments retry_count
@@ -400,7 +362,6 @@ class InMemoryExecutionLog(ExecutionLog):
             self._scheduled_flows[task_id] = updated
 
             # Notify workers that new work is available (or will be available soon)
-            # From Rust lines 388-395
             self._work_notify.set()
             self._work_notify.clear()  # Reset for next notification
 
@@ -408,10 +369,6 @@ class InMemoryExecutionLog(ExecutionLog):
         """Retrieve a scheduled flow by task ID."""
         async with self._lock:
             return self._scheduled_flows.get(task_id)
-
-    # ========================================================================
-    # Timer Operations
-    # ========================================================================
 
     async def log_timer(
         self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
@@ -443,17 +400,11 @@ class InMemoryExecutionLog(ExecutionLog):
                 self._invocations[key] = updated
 
                 # Notify timer processor that a new timer was scheduled
-                # From Rust lines 481-483
                 self._timer_notify.set()
                 self._timer_notify.clear()  # Reset for next notification
 
     async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
-        """
-        Get all timers that have expired.
-
-        **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
-        """
-
+        """Get all timers that have expired."""
         async with self._lock:
             expired = []
             for (flow_id, step), inv in self._invocations.items():
@@ -511,15 +462,10 @@ class InMemoryExecutionLog(ExecutionLog):
             self._invocations[key] = updated
 
             # Notify timer processor that timer was claimed (may need to recalculate next wake time)
-            # From Rust lines 495-497
             self._timer_notify.set()
             self._timer_notify.clear()  # Reset for next notification
 
             return True
-
-    # ========================================================================
-    # Signal Operations - External event coordination
-    # ========================================================================
 
     async def store_suspension_result(
         self, flow_id: str, step: int, suspension_key: str, result: bytes
@@ -558,7 +504,6 @@ class InMemoryExecutionLog(ExecutionLog):
             inv = self._invocations[key]
 
             # Update invocation status to WAITING_FOR_SIGNAL
-            # From Rust: storage/memory.rs lines 502-530
             updated = Invocation(
                 id=inv.id,
                 flow_id=inv.flow_id,
@@ -580,15 +525,8 @@ class InMemoryExecutionLog(ExecutionLog):
             )
             self._invocations[key] = updated
 
-    # ========================================================================
-    # Flow Resume Operations
-    # ========================================================================
-
     async def resume_flow(self, flow_id: str) -> bool:
-        """
-        Resume a suspended flow by changing status SUSPENDED → PENDING.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 626-662
+        """Resume a suspended flow by changing status SUSPENDED → PENDING.
 
         This method atomically:
         1. Checks if flow is SUSPENDED
@@ -613,7 +551,6 @@ class InMemoryExecutionLog(ExecutionLog):
                 return False
 
             # Update status to PENDING
-            # From Rust lines 635-638
             updated_task = ScheduledFlow(
                 task_id=task_to_resume.task_id,
                 flow_id=task_to_resume.flow_id,
@@ -633,17 +570,13 @@ class InMemoryExecutionLog(ExecutionLog):
             self._scheduled_flows[task_id_to_resume] = updated_task
 
             # Wake up one waiting worker since we just made a flow available
-            # From Rust lines 654-656
             self._work_notify.set()
             self._work_notify.clear()  # Reset for next notification
 
             return True
 
     async def get_next_timer_fire_time(self) -> datetime | None:
-        """
-        Get the earliest timer fire time across all flows.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 456-476
+        """Get the earliest timer fire time across all flows.
 
         Returns:
             datetime of next timer, or None if no timers pending
@@ -652,7 +585,6 @@ class InMemoryExecutionLog(ExecutionLog):
             next_fire_time = None
 
             # Iterate all invocations looking for timers
-            # From Rust lines 459-471
             for inv in self._invocations.values():
                 if inv.status == InvocationStatus.WAITING_FOR_TIMER:
                     if inv.timer_fire_at is not None:
@@ -662,10 +594,6 @@ class InMemoryExecutionLog(ExecutionLog):
                             next_fire_time = inv.timer_fire_at
 
             return next_fire_time
-
-    # ========================================================================
-    # Utility Operations
-    # ========================================================================
 
     async def reset(self) -> None:
         """Clear all data (for testing)."""
@@ -678,15 +606,8 @@ class InMemoryExecutionLog(ExecutionLog):
         """Close storage (no-op for in-memory)."""
         pass
 
-    # ========================================================================
-    # Notification Protocol Methods
-    # ========================================================================
-
     def work_notify(self) -> asyncio.Event:
-        """
-        Return event for work notifications (WorkNotificationSource protocol).
-
-        **Rust Reference**: `src/storage/memory.rs` lines 1009-1012
+        """Return event for work notifications (WorkNotificationSource protocol).
 
         Workers wait on this event to be notified when work becomes available,
         instead of polling with sleep().
@@ -697,10 +618,7 @@ class InMemoryExecutionLog(ExecutionLog):
         return self._work_notify
 
     def timer_notify(self) -> asyncio.Event:
-        """
-        Return event for timer notifications (TimerNotificationSource protocol).
-
-        **Rust Reference**: `src/storage/memory.rs` lines 1014-1017
+        """Return event for timer notifications (TimerNotificationSource protocol).
 
         Timer processors wait on this event to be notified when timer state changes,
         instead of polling every N seconds.
@@ -711,10 +629,7 @@ class InMemoryExecutionLog(ExecutionLog):
         return self._timer_notify
 
     def status_notify(self) -> asyncio.Event:
-        """
-        Return event for flow status change notifications.
-
-        **Rust Reference**: `src/storage/memory.rs` lines 69-71
+        """Return event for flow status change notifications.
 
         Callers can use this to wait for flow status changes (completion, failure, etc.)
         instead of polling. The notification is triggered whenever any flow status changes.

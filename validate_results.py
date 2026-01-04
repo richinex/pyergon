@@ -11,17 +11,19 @@ import asyncio
 from dataclasses import dataclass
 
 # Celery imports
-from benchmark_celery import celery_app, celery_step1, celery_step2, celery_step3
+from benchmark_celery import celery_step1, celery_step2, celery_step3
 
 # PyErgon imports
-from pyergon import flow, flow_type, step, Scheduler, Worker
-from pyergon.storage.redis import RedisExecutionLog
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
+from pyergon.storage.redis import RedisExecutionLog
+
 
 @dataclass
 @flow_type
 class ValidationFlow:
     """Test flow for validation."""
+
     id: str
 
     @step
@@ -41,6 +43,7 @@ class ValidationFlow:
         v1 = await self.step1()
         v2 = await self.step2(v1)
         return await self.step3(v2)
+
 
 def test_celery():
     """Test Celery workflow returns correct result."""
@@ -65,6 +68,7 @@ def test_celery():
     else:
         print(f"✗ Celery: FAILED - result is {v3}, expected 4")
         return False
+
 
 async def test_ergon():
     """Test PyErgon workflow returns correct result."""
@@ -92,6 +96,7 @@ async def test_ergon():
                 if task.status == TaskStatus.COMPLETE:
                     # Get all invocations to find the final result
                     import pickle
+
                     for step_num in range(10):  # Check up to 10 steps
                         inv = await storage.get_invocation(task_id, step_num)
                         if inv and inv.return_value:
@@ -109,7 +114,9 @@ async def test_ergon():
                                     await handle.shutdown()
                                     return True
                                 else:
-                                    print(f"✗ PyErgon: FAILED - result is {final_result}, expected 4")
+                                    print(
+                                        f"✗ PyErgon: FAILED - result is {final_result}, expected 4"
+                                    )
                                     await handle.shutdown()
                                     return False
                             break
@@ -126,18 +133,19 @@ async def test_ergon():
     finally:
         await storage.close()
 
+
 async def main():
     """Run validation tests."""
-    print("="*60)
+    print("=" * 60)
     print("VALIDATION TEST: Verify Correct Results")
-    print("="*60)
+    print("=" * 60)
 
     celery_ok = test_celery()
     ergon_ok = await test_ergon()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("VALIDATION SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     if celery_ok and ergon_ok:
         print("✓ Both frameworks compute correct results!")
@@ -146,6 +154,7 @@ async def main():
         print("✗ Some tests failed - check above for details")
 
     return celery_ok and ergon_ok
+
 
 if __name__ == "__main__":
     result = asyncio.run(main())

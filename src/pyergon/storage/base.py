@@ -1,24 +1,19 @@
-"""
-ExecutionLog protocol - Abstract interface for storage backends.
+"""Abstract storage interface for durable execution persistence.
 
-Design Pattern: Adapter Pattern (Chapter 10)
-ExecutionLog defines the target interface that all storage adapters implement.
-Different storage backends (SQLite, Redis, Memory) adapt to this common interface.
+Defines the contract that all storage backends must fulfill, enabling
+workers and schedulers to operate independently of storage implementation.
 
-Design Principle: Interface Segregation (SOLID)
-Interface is focused - only essential persistence methods, no bloat.
+Design: Adapter Pattern
+    ExecutionLog is the target interface. Different storage backends
+    (SQLite, Redis, Memory) adapt to this common interface.
 
-Design Principle: Dependency Inversion (SOLID)
-High-level modules (Worker, Scheduler) depend on this abstraction,
-not on concrete storage implementations.
+Design: Interface Segregation (SOLID)
+    Focused interface with only essential persistence methods.
 
-From Dave Cheney's Practical Go:
-"Let functions define the behavior they require" - workers only need ExecutionLog,
-not SqliteExecutionLog. This allows easy testing with InMemoryExecutionLog.
-
-From Software Design Patterns:
-Like the GameData interface in attendance_report_v2.py, this defines
-what operations clients need without specifying implementation details.
+Design: Dependency Inversion (SOLID)
+    High-level modules (Worker, Scheduler) depend on this abstraction,
+    not on concrete implementations. This enables easy testing with
+    InMemoryExecutionLog and flexible deployment with production backends.
 """
 
 from __future__ import annotations
@@ -40,15 +35,15 @@ from pyergon.models import (
 
 @dataclass
 class SignalInfo:
-    """
-    Information about a flow waiting for a signal.
+    """Information about a flow waiting for an external signal.
 
-    **Rust Reference**: `src/storage/mod.rs` lines 75-79
+    Returned by get_waiting_signals() to identify flows suspended
+    while waiting for signals to arrive.
 
     Attributes:
         flow_id: Flow identifier waiting for signal
         step: Step number waiting for signal
-        signal_name: Optional signal name (stored in timer_name field)
+        signal_name: Optional signal name for identification
     """
 
     flow_id: str
@@ -57,36 +52,27 @@ class SignalInfo:
 
 
 class StorageError(Exception):
-    """
-    Storage operation failed.
+    """Storage operation failed.
 
-    From Dave Cheney: "Errors are values"
-    Custom exception with context, not generic Exception.
+    Custom exception with context for storage-related failures.
     """
 
     pass
 
 
 class ExecutionLog(ABC):
-    """
-    Abstract storage interface for durable execution.
+    """Abstract interface for durable execution storage.
 
-    This interface defines the contract that all storage backends must fulfill.
+    Defines the contract that all storage backends must fulfill.
     Clients program to this interface, not to concrete implementations.
 
-    Pattern Benefits:
-    - Open-Closed Principle: Add new storage backends without modifying clients
-    - Testability: Easy to mock/stub with InMemoryExecutionLog
-    - Flexibility: Switch storage at runtime (SQLite <-> Redis <-> Memory)
-
-    From Dave Cheney:
-    "Design APIs that are hard to misuse" - each method has one clear purpose,
-    parameters are self-documenting, no ambiguous nil parameters.
+    Benefits:
+        - Open-Closed: Add storage backends without modifying clients
+        - Testability: Easy mocking with InMemoryExecutionLog
+        - Flexibility: Switch storage at runtime (SQLite/Redis/Memory)
+        - API Safety: Each method has one clear purpose with
+          self-documenting parameters
     """
-
-    # ========================================================================
-    # Invocation Operations - Track individual step executions
-    # ========================================================================
 
     @abstractmethod
     async def log_invocation_start(
@@ -100,22 +86,14 @@ class ExecutionLog(ABC):
         delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
-        """
-        Record the start of a step execution.
-
-        RUST COMPLIANCE: Matches Rust ExecutionLog::log_invocation_start
-        Updated to include all Invocation fields (id, params_hash, delay, retry_policy).
-
-        From Dave Cheney: "Be wary of functions which take several parameters
-        of the same type" - here different types (str, int, bytes) prevent
-        accidental parameter swapping.
+        """Record the start of a step execution.
 
         Args:
             flow_id: Unique flow identifier
             step: Step number (0-indexed)
             class_name: Name of flow class
-            method_name: Name of step method (was step_name)
-            parameters: Serialized parameters (was params)
+            method_name: Name of step method
+            parameters: Serialized parameters (pickle format)
             params_hash: Hash of parameters for non-determinism detection
             delay: Optional delay before execution in milliseconds
             retry_policy: Optional retry policy for this invocation
@@ -132,20 +110,15 @@ class ExecutionLog(ABC):
     async def log_invocation_completion(
         self, flow_id: str, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
-        """
-        Record the completion of a step execution.
+        """Record the completion of a step execution.
 
-        RUST COMPLIANCE: Matches Rust ExecutionLog::log_invocation_completion
-        Updated field names and added is_retryable for error handling.
-
-        From Dave Cheney: "Only handle an error once" - this method either
-        succeeds (returns Invocation) or raises (StorageError). Caller handles
-        the error, this method doesn't log AND raise.
+        Updates the invocation with the result and marks it complete.
+        Either succeeds (returns Invocation) or raises (StorageError).
 
         Args:
             flow_id: Unique flow identifier
             step: Step number (0-indexed)
-            return_value: Serialized result (was result)
+            return_value: Serialized result (pickle format)
             is_retryable: Whether cached error is retryable (3-state: None/True/False)
 
         Returns:
@@ -158,12 +131,10 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
-        """
-        Retrieve a specific step invocation.
+        """Retrieve a specific step invocation.
 
-        From Dave Cheney: "Make the zero value useful" - returns None
-        when invocation doesn't exist (not raising exception), which is
-        a valid state (step hasn't executed yet).
+        Returns None when invocation doesn't exist (valid state when
+        step hasn't executed yet).
 
         Args:
             flow_id: Unique flow identifier
@@ -176,32 +147,18 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_incomplete_flows(self) -> list[Invocation]:
-        """
-        Get all flows with incomplete invocations.
+        """Get all flows with incomplete invocations.
 
         Used for recovery - find flows that were interrupted mid-execution.
-
-        From Dave Cheney: "Return early rather than nesting deeply" -
-        implementations should use guard clauses to filter results early.
 
         Returns:
             List of invocations for incomplete flows (may be empty)
         """
         pass
 
-    # ========================================================================
-    # Queue Operations - Distribute work across workers
-    # ========================================================================
-
     @abstractmethod
     async def enqueue_flow(self, flow: ScheduledFlow) -> str:
-        """
-        Add a flow to the distributed work queue.
-
-        **Rust Reference**: `src/storage/mod.rs` line 167
-        ```rust
-        async fn enqueue_flow(&self, flow: ScheduledFlow) -> Result<Uuid>
-        ```
+        """Add a flow to the distributed work queue.
 
         This method accepts a complete ScheduledFlow object which includes:
         - flow_id, flow_type, flow_data (basic flow info)
@@ -211,11 +168,10 @@ class ExecutionLog(ABC):
         - retry_policy (for retry behavior)
 
         The ScheduledFlow object contains all necessary metadata for execution,
-        including parent-child relationships for Level 3 API.
+        including parent-child relationships for child flow invocation.
 
-        From Dave Cheney: "Design APIs that are hard to misuse" - by accepting
-        a complete object instead of individual parameters, we ensure all required
-        fields are present and prevent parameter order mistakes.
+        Accepting a complete object ensures all required fields are present
+        and prevents parameter order mistakes.
 
         Args:
             flow: Complete ScheduledFlow object to enqueue
@@ -230,15 +186,12 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
-        """
-        Claim and retrieve a pending flow from the queue.
+        """Claim and retrieve a pending flow from the queue.
 
-        From Dave Cheney: "Design APIs for their default use case" -
-        most common use is worker polling queue, so this single method
-        does both claim AND retrieve (no separate claim() then get()).
+        Single method does both claim AND retrieve (no separate operations).
 
-        Implementation Note: Use IMMEDIATE transaction for pessimistic locking
-        to prevent double-execution (from Rust ergon SqliteExecutionLog).
+        Implementation Note: Use pessimistic locking (e.g., SQLite IMMEDIATE
+        transaction) to prevent double-execution.
 
         Args:
             worker_id: Worker identifier (for tracking who claimed this)
@@ -252,21 +205,14 @@ class ExecutionLog(ABC):
     async def complete_flow(
         self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
-        """
-        Mark a flow task as complete or failed.
+        """Mark a flow task as complete or failed.
 
-        Args:
-            task_id: The task identifier
-            status: The final status (COMPLETE, FAILED, or SUSPENDED)
-            error_message: Optional error message if status is FAILED
-
-        From Dave Cheney: "Only handle an error once" - this method either
-        succeeds (returns None) or raises (StorageError). No return value
-        needed since it's fire-and-forget update.
+        Either succeeds (returns None) or raises (StorageError).
 
         Args:
             task_id: Task identifier from enqueue_flow()
-            status: Final status (COMPLETE or FAILED)
+            status: Final status (COMPLETE, FAILED, or SUSPENDED)
+            error_message: Optional error message if status is FAILED
 
         Raises:
             ValueError: If status is not terminal (COMPLETE/FAILED)
@@ -276,12 +222,9 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
-        """
-        Reschedule a failed flow for retry after a delay.
+        """Reschedule a failed flow for retry after a delay.
 
-        **Rust Reference**: `src/storage/mod.rs` lines 245-260
-
-        This method:
+        This method atomically:
         1. Increments retry_count
         2. Sets error_message
         3. Sets status back to PENDING
@@ -301,11 +244,9 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
-        """
-        Retrieve a scheduled flow by task ID.
+        """Retrieve a scheduled flow by task ID.
 
-        From Dave Cheney: "Design APIs for their default use case"
-        Returns Optional to make the "not found" case explicit without exceptions.
+        Returns None to make the "not found" case explicit without exceptions.
 
         Args:
             task_id: Task identifier from enqueue_flow()
@@ -315,26 +256,19 @@ class ExecutionLog(ABC):
         """
         pass
 
-    # ========================================================================
-    # Timer Operations - Durable timer coordination
-    # ========================================================================
-
     @abstractmethod
     async def log_timer(
         self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
-        """
-        Schedule a durable timer.
+        """Schedule a durable timer.
 
-        RUST COMPLIANCE: Matches Rust ExecutionLog::log_timer
-        Updated field names: fire_at → timer_fire_at, name → timer_name.
-        Changed timer_name to Optional[str] to match 3-state semantic.
+        Creates a timer that will trigger workflow resumption at the specified time.
 
         Args:
             flow_id: Unique flow identifier
             step: Step number waiting for timer
-            timer_fire_at: When timer should fire (was fire_at)
-            timer_name: Optional timer name for debugging (was name)
+            timer_fire_at: When timer should fire
+            timer_name: Optional timer name for debugging
 
         Raises:
             StorageError: If timer logging fails
@@ -343,13 +277,10 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
-        """
-        Get all timers that have expired.
+        """Get all timers that have expired.
 
-        **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
-
-        Returns TimerInfo objects with flow_id, step, fire_at, and timer_name.
-        This matches Rust's implementation and provides better debugging information.
+        Returns TimerInfo objects with flow_id, step, fire_at, and timer_name
+        for better debugging information.
 
         Args:
             now: Current time (explicit parameter for testability)
@@ -361,15 +292,13 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
-        """
-        Claim an expired timer (optimistic concurrency).
+        """Claim an expired timer (optimistic concurrency).
 
-        From Dave Cheney: "Design APIs that are hard to misuse" - returns
-        bool instead of raising exception. False means another worker claimed
-        it first, which is normal in distributed system.
+        Returns bool instead of raising exception. False means another
+        worker claimed it first, which is normal in distributed system.
 
         Implementation Note: Use UPDATE with WHERE status check for
-        optimistic concurrency (from Rust ergon timer.rs).
+        optimistic concurrency control.
 
         Args:
             flow_id: Unique flow identifier
@@ -381,20 +310,13 @@ class ExecutionLog(ABC):
         """
         pass
 
-    # ========================================================================
-    # Signal Operations - External event coordination
-    # ========================================================================
-
     @abstractmethod
     async def store_suspension_result(
         self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
-        """
-        Store suspension result data (timer or signal completion).
+        """Store suspension result data (timer or signal completion).
 
-        **Rust Reference**: `src/storage/mod.rs` lines 403-410
-
-        This is the underlying method for storing results that resume suspended flows.
+        This is the underlying method for storing results that resume suspended flows:
         - For timers: empty bytes (timer just marks completion)
         - For signals: SuspensionPayload with child result
 
@@ -413,10 +335,7 @@ class ExecutionLog(ABC):
     async def get_suspension_result(
         self, flow_id: str, step: int, suspension_key: str
     ) -> bytes | None:
-        """
-        Get suspension result data if available.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 424-433
+        """Get suspension result data if available.
 
         Returns None if the suspension hasn't completed yet.
 
@@ -432,10 +351,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
-        """
-        Remove suspension result data after consuming it.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 442-448
+        """Remove suspension result data after consuming it.
 
         Clean up after the flow has resumed and consumed the result.
 
@@ -451,10 +367,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
-        """
-        Mark an invocation as waiting for an external signal.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 500-505
+        """Mark an invocation as waiting for an external signal.
 
         Updates the invocation status to WAITING_FOR_SIGNAL and stores the signal name.
         Called by child flow invocation before scheduling the child.
@@ -473,10 +386,7 @@ class ExecutionLog(ABC):
         pass
 
     async def get_waiting_signals(self) -> list[SignalInfo]:
-        """
-        Get all flows waiting for external signals.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 496-498
+        """Get all flows waiting for external signals.
 
         Returns flows where:
         - execution_log.status = 'WAITING_FOR_SIGNAL'
@@ -495,10 +405,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
-        """
-        Update the is_retryable flag for a specific step invocation.
-
-        **Rust Reference**: `src/storage/mod.rs` line 150
+        """Update the is_retryable flag for a specific step invocation.
 
         This method is called when a step returns an error to mark whether
         the error is retryable (transient) or not (permanent).
@@ -518,10 +425,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def has_non_retryable_error(self, flow_id: str) -> bool:
-        """
-        Check if any step in the flow has a non-retryable error.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 531-545
+        """Check if any step in the flow has a non-retryable error.
 
         Used by retry logic to determine if a flow should stop retrying.
         If any step has is_retryable=False, the entire flow should not retry.
@@ -542,17 +446,9 @@ class ExecutionLog(ABC):
         """
         pass
 
-    # ========================================================================
-    # Flow Resume Operations
-    # ========================================================================
-
     @abstractmethod
     async def resume_flow(self, flow_id: str) -> bool:
-        """
-        Resume a suspended flow by changing status SUSPENDED → PENDING.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 352-357
-        **Rust Reference**: `src/storage/memory.rs` lines 626-662
+        """Resume a suspended flow by changing status SUSPENDED → PENDING.
 
         This method atomically:
         1. Checks if flow is SUSPENDED
@@ -581,10 +477,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
-        """
-        Get all invocations (steps) for a specific flow.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 164-172
+        """Get all invocations (steps) for a specific flow.
 
         Used by handle_suspended_flow() to check if signals/timers arrived
         during suspension (race condition handling).
@@ -608,11 +501,7 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def get_next_timer_fire_time(self) -> datetime | None:
-        """
-        Get the earliest timer fire time across all flows.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 306-308
-        **Rust Reference**: `src/storage/memory.rs` lines 456-476
+        """Get the earliest timer fire time across all flows.
 
         Used by Worker to calculate sleep duration for event-driven timer
         processing. Instead of polling every N seconds, Worker sleeps until
@@ -638,17 +527,11 @@ class ExecutionLog(ABC):
         """
         pass
 
-    # ========================================================================
-    # Utility Operations
-    # ========================================================================
-
     @abstractmethod
     async def reset(self) -> None:
-        """
-        Clear all data (for testing/demos).
+        """Clear all data (for testing/demos).
 
-        From Dave Cheney: "Make the zero value useful" - after reset(),
-        storage is in initial state (empty but functional).
+        After reset(), storage is in initial state (empty but functional).
 
         Warning: Destructive operation - only use in testing!
         """
@@ -656,57 +539,38 @@ class ExecutionLog(ABC):
 
     @abstractmethod
     async def close(self) -> None:
-        """
-        Close storage connections and clean up resources.
+        """Close storage connections and clean up resources.
 
-        From Dave Cheney: "Never start a goroutine without knowing when it
-        will stop" - storage connections must be explicitly closed, not
-        left to garbage collection.
-
+        Storage connections must be explicitly closed.
         Use this in a context manager or try/finally block.
         """
         pass
 
 
-# =============================================================================
-# Notification Source Protocols - Event-Driven Storage
-# =============================================================================
-
-
 @runtime_checkable
 class WorkNotificationSource(Protocol):
-    """
-    Protocol for storage backends that support event-driven work notifications.
-
-    **Rust Reference**: `src/storage/mod.rs` lines 633-638
+    """Protocol for storage backends that support event-driven work notifications.
 
     This protocol enables workers to wait for work instead of polling,
     improving latency and reducing CPU usage.
 
-    **Pattern**: Interface Segregation Principle (SOLID)
+    Pattern: Interface Segregation Principle (SOLID)
     Not all storage backends need to implement this. Storage backends
     that can't provide efficient notifications (e.g., remote REST API)
     can skip this protocol and workers will fall back to polling.
 
-    **Contract**:
+    Contract:
     Implementations must:
     1. Maintain an asyncio.Event for work notifications
     2. Call `event.set()` when work becomes available (enqueue_flow, resume_flow)
     3. Workers will `await event.wait()` and then `event.clear()`
 
-    **From Rust**:
-    ```rust
-    pub trait WorkNotificationSource: ExecutionLog {
-        fn work_notify(&self) -> &Arc<tokio::sync::Notify>;
-    }
-    ```
+    Python vs Other Languages:
+    Unlike compile-time trait bounds, Python uses runtime protocol checking
+    with isinstance(). This provides flexibility at the cost of later error
+    detection.
 
-    **Python Equivalent**:
-    Unlike Rust's compile-time trait bounds, Python uses runtime
-    protocol checking with isinstance(). This provides flexibility
-    at the cost of later error detection.
-
-    **Usage**:
+    Usage:
     ```python
     from pyergon.storage import WorkNotificationSource
 
@@ -723,7 +587,7 @@ class WorkNotificationSource(Protocol):
             return task_id
     ```
 
-    **Worker Usage**:
+    Worker Usage:
     ```python
     if isinstance(storage, WorkNotificationSource):
         # Fast path: event-driven
@@ -738,13 +602,10 @@ class WorkNotificationSource(Protocol):
     """
 
     def work_notify(self) -> asyncio.Event:
-        """
-        Return event that signals when work becomes available.
+        """Return event that signals when work becomes available.
 
         Workers use this to wait for work instead of sleeping.
         Storage backend signals this event when new work is enqueued.
-
-        **From Rust**: `fn work_notify(&self) -> &Arc<Notify>`
 
         Returns:
             asyncio.Event that workers wait on
@@ -754,32 +615,22 @@ class WorkNotificationSource(Protocol):
 
 @runtime_checkable
 class TimerNotificationSource(Protocol):
-    """
-    Protocol for storage backends that support event-driven timer notifications.
-
-    **Rust Reference**: `src/storage/mod.rs` lines 676-681
+    """Protocol for storage backends that support event-driven timer notifications.
 
     This protocol enables timer processing to be event-driven rather than
     polling-based, improving latency and reducing unnecessary database queries.
 
-    **Pattern**: Interface Segregation Principle (SOLID)
+    Pattern: Interface Segregation Principle (SOLID)
     Not all storage backends need timer notifications. This protocol
     separates timer notification capability from base ExecutionLog.
 
-    **Contract**:
+    Contract:
     Implementations must call `event.set()` when:
     - A new timer is scheduled (log_timer)
     - A timer's fire time is updated
     - A timer is claimed (may need to recalculate next wake time)
 
-    **From Rust**:
-    ```rust
-    pub trait TimerNotificationSource: ExecutionLog {
-        fn timer_notify(&self) -> &Arc<tokio::sync::Notify>;
-    }
-    ```
-
-    **Python Equivalent**:
+    Usage:
     ```python
     class MyStorage(ExecutionLog):
         def __init__(self):
@@ -793,7 +644,7 @@ class TimerNotificationSource(Protocol):
             self._timer_notify.set()  # Wake timer processor
     ```
 
-    **Timer Processor Usage**:
+    Timer Processor Usage:
     ```python
     if isinstance(storage, TimerNotificationSource):
         # Event-driven: wake on timer changes
@@ -808,13 +659,10 @@ class TimerNotificationSource(Protocol):
     """
 
     def timer_notify(self) -> asyncio.Event:
-        """
-        Return event that signals when timer state changes.
+        """Return event that signals when timer state changes.
 
         Timer processors use this to wait for timer events instead of polling.
         Storage backend signals this when timers are scheduled or fired.
-
-        **From Rust**: `fn timer_notify(&self) -> &Arc<Notify>`
 
         Returns:
             asyncio.Event that timer processors wait on

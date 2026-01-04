@@ -1,26 +1,12 @@
-"""
-Context manages task-local state during flow execution.
+"""Task-local execution context for workflow state management.
 
-This module provides Context which tracks:
-- Step counter (atomic increment)
-- Flow ID and storage backend
-- Current call type (Run/Await/Resume)
-- Caching and logging operations
+Provides Context for tracking flow execution state without threading
+it through every function call. Uses contextvars for task-local storage,
+allowing multiple flows to execute concurrently without interference.
 
-RUST COMPLIANCE: Matches Rust ergon src/executor/context.rs
-
-From Rust:
-    tokio::task_local! {
-        static EXECUTION_CONTEXT: Arc<ExecutionContext>;
-        static CALL_TYPE: CallType;
-    }
-
-Design Pattern: Task-local state using contextvars (Python equivalent of tokio::task_local)
-This avoids threading Context through every function call.
-
-From Dave Cheney:
-"Avoid package level state" - but contextvars are task-local, not global,
-so this is acceptable for implicit context tracking in async code.
+Design: Task-Local State (contextvars)
+    Avoids explicit parameter passing while remaining safe for concurrent
+    async execution. Each async task has its own isolated Context.
 """
 
 import pickle
@@ -38,46 +24,21 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-# =============================================================================
-# Sentinel Value for Cache Miss Detection
-# =============================================================================
-
-# Sentinel value to distinguish cache miss from cached None
+# Sentinel value for cache miss detection
 #
-# **Problem**: Python's Optional[T] cannot distinguish:
-#   - Cache miss (no result found) → return None
-#   - Cache hit with None result (step returns None) → return None
+# Problem: Optional[T] cannot distinguish between:
+#   - Cache miss (no result found) → should return sentinel
+#   - Cache hit with None result (step returned None) → should return None
 #
-# **Rust Equivalent**: Result<Option<T>>
-#   - Ok(Some(value)) → cache hit with value (value can be None/())
-#   - Ok(None) → cache miss
-#   - Err(e) → error (non-determinism, storage failure)
+# Solution: Sentinel Object Pattern (PEP 661)
+#   Use unique object() instance tested with identity (is), not equality (==)
 #
-# **Python Solution**: Sentinel Object Pattern
-#
-# **References**:
-#   - PEP 661 – Sentinel Values: https://peps.python.org/pep-0661/
-#     "Proposes adding a utility for defining sentinel values to the stdlib"
-#
-#   - Python Patterns Guide - Sentinel Object:
-#     https://python-patterns.guide/python/sentinel-object/
-#     "Instantiate a new object() to test for identity"
-#
-#   - Beyond None (2025): https://www.sambaths.com/posts/2025/02/beyond-none-mastering-sentinel-objects-for-cleaner-python-code/
-#     "Use sentinels when None is a valid input"
-#
-#   - functools.lru_cache() Implementation:
-#     Python stdlib uses this pattern to "distinguish cached None values from cache misses"
-#
-# **Usage**:
+# Usage:
 #   cached = await get_cached_result(...)
 #   if cached is not _CACHE_MISS:
 #       return cached  # Cache hit (may be None)
 #   else:
 #       # Cache miss - execute step
-#
-# **Type Safety**: Use identity check (is) not equality (==)
-#   From PEP 8: "Comparisons to singletons like None should always be done with is or is not"
 #
 _CACHE_MISS = object()
 
@@ -87,18 +48,13 @@ _CACHE_MISS = object()
 # =============================================================================
 
 EXECUTION_CONTEXT: ContextVar[Optional["Context"]] = ContextVar("execution_context", default=None)
-"""
-Task-local Context.
+"""Task-local Context for flow execution state.
 
-Each asyncio task has its own Context, allowing multiple flows
-to execute concurrently without interference.
-
-From Rust:
-    tokio::task_local! {
-        static EXECUTION_CONTEXT: Arc<Context>;
-    }
+Each async task has its own Context, allowing multiple flows to execute
+concurrently without interference.
 
 Usage:
+    ```python
     ctx = Context(flow_id, storage)
     token = EXECUTION_CONTEXT.set(ctx)
     try:
@@ -107,28 +63,24 @@ Usage:
         step = current_ctx.next_step()
     finally:
         EXECUTION_CONTEXT.reset(token)
+    ```
 """
 
 CALL_TYPE: ContextVar[CallType] = ContextVar("call_type", default=CallType.RUN)
-"""
-Task-local call type (Run/Await/Resume).
+"""Task-local execution mode (RUN, AWAIT, or RESUME).
 
-Tracks execution mode for the current step invocation.
-
-From Rust:
-    tokio::task_local! {
-        static CALL_TYPE: CallType;
-    }
+Tracks whether the current step is first execution, waiting, or resuming.
 
 Usage:
+    ```python
     token = CALL_TYPE.set(CallType.RUN)
     try:
-        # Call type available to step execution
         if CALL_TYPE.get() == CallType.AWAIT:
             # Handle waiting case
             pass
     finally:
         CALL_TYPE.reset(token)
+    ```
 """
 
 
@@ -138,54 +90,34 @@ Usage:
 
 
 class Context:
-    """
-    Manages execution state for a single flow instance.
+    """Manages execution state for a single flow instance.
 
-    **Rust Reference**: `src/executor/context.rs`
+    Provides atomic step counter, caching, logging operations, and
+    integration with task-local context variables.
 
-    Context provides:
-    - Atomic step counter (thread-safe increment)
-    - Caching and logging operations via storage
-    - Integration with task-local context variables
-
-    Design: Single Responsibility - only manages execution state
-    Does not contain flow business logic or worker logic.
-
-    From Rust ergon src/executor/context.rs:
-        pub struct ExecutionContext {
-            pub flow_id: Uuid,
-            storage: Arc<dyn ExecutionLog>,
-            step_counter: AtomicI32,
-            // ... other fields
-        }
+    Design: Single Responsibility
+        Only manages execution state. Does not contain flow business
+        logic or worker coordination logic.
 
     Usage:
-        # Create context
+        ```python
         ctx = Context(flow_id, storage)
-
-        # Set as task-local
         token = EXECUTION_CONTEXT.set(ctx)
         try:
-            # Use context
             step = ctx.next_step()
             await ctx.log_step_start(...)
         finally:
             EXECUTION_CONTEXT.reset(token)
+        ```
     """
 
     def __init__(self, flow_id: str, storage: ExecutionLog, class_name: str = "Flow"):
-        """
-        Initialize Context.
-
-        **Rust Reference**: `src/executor/context.rs` lines 77-88
+        """Initialize Context for flow execution.
 
         Args:
             flow_id: Unique identifier for this flow execution
             storage: Storage backend for persistence
             class_name: Name of the flow class (for logging)
-
-        **Python Best Practice**: Simple initialization without complex logic
-        Reference: https://docs.python.org/3/reference/datamodel.html#object.__init__
         """
         self.flow_id = flow_id
         self.storage = storage

@@ -22,12 +22,11 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import List, Tuple
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import RetryPolicy, TaskStatus
-from pyergon.storage.sqlite import SqliteExecutionLog
 from pyergon.executor.timer import schedule_timer_named
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 # Suppress worker logging for clean output (like Rust tracing::debug!)
 logging.basicConfig(level=logging.CRITICAL)
@@ -37,10 +36,12 @@ logging.basicConfig(level=logging.CRITICAL)
 # CHILD FLOWS
 # ============================================================================
 
+
 @dataclass
 @flow_type(invokable=str)
 class PaymentFlow:
     """Payment processing child flow (no logging)."""
+
     order_id: str
     amount: float
 
@@ -74,6 +75,7 @@ class PaymentFlow:
 @flow_type(invokable=str)
 class ShippingFlow:
     """Shipping arrangement child flow (no logging)."""
+
     order_id: str
     address: str
 
@@ -101,9 +103,11 @@ class ShippingFlow:
 # MAIN FLOW
 # ============================================================================
 
+
 @dataclass
 class ValidationResult:
     """Aggregated validation results."""
+
     customer_valid: bool
     inventory_available: bool
     fraud_passed: bool
@@ -116,6 +120,7 @@ class OrderReceipt:
 
     **Rust Reference**: OrderReceipt lines 170-178
     """
+
     order_id: str
     flow_id: str
     payment_id: str
@@ -132,6 +137,7 @@ class OrderFlow:
 
     **Rust Reference**: OrderFlow in comprehensive_demo_3.rs lines 68-161
     """
+
     order_id: str
     customer_id: str
     amount: float
@@ -150,17 +156,11 @@ class OrderFlow:
         await self.run_validations()
 
         # Invoke payment child flow
-        payment_pending = self.invoke(PaymentFlow(
-            order_id=self.order_id,
-            amount=self.amount
-        ))
+        payment_pending = self.invoke(PaymentFlow(order_id=self.order_id, amount=self.amount))
         payment_id = await payment_pending.result()
 
         # Invoke shipping child flow
-        shipping_pending = self.invoke(ShippingFlow(
-            order_id=self.order_id,
-            address=self.address
-        ))
+        shipping_pending = self.invoke(ShippingFlow(order_id=self.order_id, address=self.address))
         tracking_id = await shipping_pending.result()
 
         return OrderReceipt(
@@ -169,7 +169,7 @@ class OrderFlow:
             payment_id=payment_id,
             tracking_id=tracking_id,
             status="CONFIRMED",
-            version=self.version
+            version=self.version,
         )
 
     async def run_validations(self) -> ValidationResult:
@@ -180,10 +180,7 @@ class OrderFlow:
         """
         from pyergon.executor.dag_runtime import dag
 
-        return await dag(
-            self,
-            final_step="aggregate_validations"
-        )
+        return await dag(self, final_step="aggregate_validations")
 
     @step
     async def validate_customer(self) -> bool:
@@ -220,16 +217,13 @@ class OrderFlow:
     @step(
         depends_on=["validate_customer", "check_inventory", "check_fraud"],
         inputs={
-            'customer': 'validate_customer',
-            'inventory': 'check_inventory',
-            'fraud': 'check_fraud'
-        }
+            "customer": "validate_customer",
+            "inventory": "check_inventory",
+            "fraud": "check_fraud",
+        },
     )
     async def aggregate_validations(
-        self,
-        customer: bool,
-        inventory: bool,
-        fraud: bool
+        self, customer: bool, inventory: bool, fraud: bool
     ) -> ValidationResult:
         """
         Aggregate parallel validation results.
@@ -240,15 +234,14 @@ class OrderFlow:
             raise Exception("ValidationFailed")
 
         return ValidationResult(
-            customer_valid=customer,
-            inventory_available=inventory,
-            fraud_passed=fraud
+            customer_valid=customer, inventory_available=inventory, fraud_passed=fraud
         )
 
 
 # ============================================================================
 # MAIN
 # ============================================================================
+
 
 async def main():
     """
@@ -269,7 +262,7 @@ async def main():
             worker_id=f"worker-{i}",
             enable_timers=True,
             poll_interval=0.1,
-            timer_interval=0.05
+            timer_interval=0.05,
         )
 
         # Register all flow types
@@ -288,7 +281,7 @@ async def main():
         ("ORDER-002", "CUST-456", 149.50, "456 Oak Ave", "v2.0"),
     ]
 
-    task_ids: List[Tuple[str, str]] = []
+    task_ids: list[tuple[str, str]] = []
     for order_id, customer_id, amount, address, version in orders:
         flow_id = uuid.uuid4()
         order = OrderFlow(
@@ -297,7 +290,7 @@ async def main():
             amount=amount,
             address=address,
             version=version,
-            flow_id=str(flow_id)
+            flow_id=str(flow_id),
         )
 
         # Create scheduler with version
@@ -312,10 +305,9 @@ async def main():
 
     try:
         await asyncio.wait_for(
-            _wait_for_completion(storage, task_ids, status_notify),
-            timeout=timeout
+            _wait_for_completion(storage, task_ids, status_notify), timeout=timeout
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[Warning] Timeout waiting for flows to complete")
 
     # Print final results
@@ -331,9 +323,7 @@ async def main():
 
 
 async def _wait_for_completion(
-    storage,
-    task_ids: List[Tuple[str, str]],
-    status_notify: asyncio.Event
+    storage, task_ids: list[tuple[str, str]], status_notify: asyncio.Event
 ):
     """
     Wait for all flows to complete using event-driven notifications.
@@ -358,7 +348,7 @@ async def _wait_for_completion(
         status_notify.clear()  # Reset for next notification
 
 
-async def _print_results(storage, task_ids: List[Tuple[str, str]]):
+async def _print_results(storage, task_ids: list[tuple[str, str]]):
     """Print final results for all tasks."""
     for task_id, _ in task_ids:
         task = await storage.get_scheduled_flow(task_id)
@@ -369,6 +359,7 @@ async def _print_results(storage, task_ids: List[Tuple[str, str]]):
             inv = await storage.get_invocation(task.flow_id, 0)
             if inv and inv.return_value:
                 import pickle
+
                 try:
                     result = pickle.loads(inv.return_value)
                     if isinstance(result, OrderReceipt):

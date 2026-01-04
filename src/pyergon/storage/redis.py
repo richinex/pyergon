@@ -1,7 +1,6 @@
-"""
-Redis-based execution log implementation.
+"""Redis-based execution log implementation.
 
-This module provides a Redis backend for distributed execution with true
+Provides a Redis backend for distributed execution with true
 multi-machine support. Unlike SQLite which requires shared filesystem access,
 Redis enables workers to run on completely separate machines.
 
@@ -25,15 +24,9 @@ Performance Characteristics:
 - Status update: O(1) with HSET
 - Network overhead: ~0.1-0.5ms per operation (local network)
 
-From Software Design Patterns:
-- Adapter Pattern: Implements ExecutionLog protocol for Redis
-- Template Method: Common operations follow fixed patterns
-- Strategy Pattern: Different data structures for different access patterns
-
-From Dave Cheney:
-- Simple, clear naming (flow_key, invocations_key)
-- Explicit dependencies (Redis connection passed to constructor)
-- Return early pattern (guard clauses for existence checks)
+Design: Adapter Pattern
+Implements ExecutionLog protocol for Redis, adapting Redis key-value
+store to the ExecutionLog interface.
 """
 
 from __future__ import annotations
@@ -61,31 +54,24 @@ from pyergon.storage.base import ExecutionLog, StorageError
 
 
 class RedisExecutionLog(ExecutionLog):
-    """
-    Redis execution log using connection pooling.
+    """Redis execution log using connection pooling.
 
-    Design Pattern: Adapter Pattern
+    Design: Adapter Pattern
     Adapts Redis key-value store to ExecutionLog protocol.
 
-    From Dave Cheney: "Avoid package level state"
     All dependencies (Redis connection) passed explicitly.
 
     Usage:
         storage = RedisExecutionLog("redis://localhost:6379")
         await storage.connect()
 
-        # Enqueue flow
         task_id = await storage.enqueue_flow(flow_id, flow_type, flow_data)
-
-        # Worker dequeue
         flow = await storage.dequeue_flow("worker-1")
     """
 
     def __init__(self, redis_url: str = "redis://localhost:6379", max_connections: int = 16):
-        """
-        Initialize Redis execution log.
+        """Initialize Redis execution log.
 
-        From Dave Cheney: "Design APIs for their default use case"
         Default redis_url works for local development.
 
         Args:
@@ -96,24 +82,12 @@ class RedisExecutionLog(ExecutionLog):
         self._max_connections = max_connections
         self._redis: redis.Redis | None = None
 
-        # Notification events (implements WorkNotificationSource and TimerNotificationSource)
-        # From Rust: work_notify: Arc<Notify>, timer_notify: Arc<Notify>, status_notify: Arc<Notify>
-        # Python uses asyncio.Event instead of tokio::sync::Notify
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
         self._status_notify = asyncio.Event()
 
-    # ========================================================================
-    # Connection Management
-    # ========================================================================
-
     async def connect(self) -> None:
-        """
-        Establish Redis connection pool.
-
-        From Dave Cheney: "Make the zero value useful"
-        Connection pool initialized lazily on connect().
-        """
+        """Establish Redis connection pool."""
         self._redis = redis.from_url(
             self._redis_url,
             encoding="utf-8",
@@ -122,28 +96,17 @@ class RedisExecutionLog(ExecutionLog):
         )
 
     async def close(self) -> None:
-        """
-        Close Redis connection pool.
-
-        From Dave Cheney: "Never start a goroutine without knowing when it will stop"
-        Explicit close for resource cleanup.
-        """
+        """Close Redis connection pool."""
         if self._redis:
             await self._redis.close()
 
     def _check_connected(self) -> None:
-        """
-        Guard: Ensure connection established.
+        """Ensure connection established.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
         Raises immediately if not connected.
         """
         if self._redis is None:
             raise StorageError("Not connected. Call connect() first.")
-
-    # ========================================================================
-    # Key Builders - Simple, Clear Naming
-    # ========================================================================
 
     @staticmethod
     def _flow_key(task_id: str) -> str:
@@ -160,10 +123,6 @@ class RedisExecutionLog(ExecutionLog):
         """Build Redis key for specific invocation."""
         return f"ergon:inv:{flow_id}:{step}"
 
-    # ========================================================================
-    # Invocation Operations
-    # ========================================================================
-
     async def log_invocation_start(
         self,
         flow_id: str,
@@ -175,13 +134,10 @@ class RedisExecutionLog(ExecutionLog):
         delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
-        """
-        Log the start of a step invocation.
+        """Log the start of a step invocation.
 
-        **Rust Reference**: redis.rs lines 502-624
-
-        From Rust ergon: Uses Redis HASH for invocation data,
-        atomic MULTI/EXEC for consistency.
+        Uses Redis HASH for invocation data with atomic MULTI/EXEC
+        for consistency.
         """
         self._check_connected()
 
@@ -192,7 +148,6 @@ class RedisExecutionLog(ExecutionLog):
 
         # Atomic pipeline: store invocation + add to invocations list
         async with self._redis.pipeline(transaction=True) as pipe:
-            # Store invocation as HASH (use Unix timestamps like Rust)
             await pipe.hset(inv_key, "id", inv_id)
             await pipe.hset(inv_key, "flow_id", flow_id)
             await pipe.hset(inv_key, "step", str(step))
@@ -242,13 +197,9 @@ class RedisExecutionLog(ExecutionLog):
     async def log_invocation_completion(
         self, flow_id: str, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
-        """
-        Log the completion of a step invocation.
+        """Log the completion of a step invocation.
 
-        **Rust Reference**: redis.rs lines 626-685
-
-        From Dave Cheney: "Only handle an error once"
-        Either succeeds or raises, no double error handling.
+        Either succeeds or raises StorageError.
         """
         self._check_connected()
 
@@ -277,11 +228,9 @@ class RedisExecutionLog(ExecutionLog):
         return await self._get_invocation_by_key(inv_key)
 
     async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
-        """
-        Retrieve a specific invocation.
+        """Retrieve a specific invocation.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
-        Check existence → return None if not found → return result.
+        Returns None if not found.
         """
         self._check_connected()
 
@@ -294,11 +243,9 @@ class RedisExecutionLog(ExecutionLog):
         return await self._get_invocation_by_key(inv_key)
 
     async def get_latest_invocation(self, flow_id: str) -> Invocation | None:
-        """
-        Get the latest invocation for a flow.
+        """Get the latest invocation for a flow.
 
-        From Dave Cheney: "Design APIs for their default use case"
-        Common need: check latest step → single method.
+        Returns None if no invocations exist.
         """
         invocations = await self.get_invocations_for_flow(flow_id)
         if not invocations:
@@ -307,17 +254,14 @@ class RedisExecutionLog(ExecutionLog):
         return max(invocations, key=lambda inv: inv.step)
 
     async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
-        """
-        Get all invocations for a flow.
+        """Get all invocations for a flow.
 
-        From Rust ergon: Uses LRANGE to get all invocation keys,
-        then HGETALL for each invocation.
+        Uses LRANGE to get all invocation keys, then HGETALL for each.
         """
         self._check_connected()
 
         inv_list_key = self._invocations_key(flow_id)
 
-        # Get all invocation keys
         inv_keys = await self._redis.lrange(inv_list_key, 0, -1)
 
         invocations = []
@@ -325,47 +269,37 @@ class RedisExecutionLog(ExecutionLog):
             inv = await self._get_invocation_by_key(key.decode())
             invocations.append(inv)
 
-        # Sort by step
         invocations.sort(key=lambda inv: inv.step)
         return invocations
 
     async def get_incomplete_flows(self) -> list[Invocation]:
-        """
-        Get all incomplete flows (step 0 not COMPLETE).
+        """Get all incomplete flows (step 0 not COMPLETE).
 
-        From Rust ergon: Scans for all invocation keys,
-        filters by status != COMPLETE.
+        Scans all invocation keys and filters by status.
         """
         self._check_connected()
 
-        # Scan for all invocation keys
         incomplete = []
         async for key in self._redis.scan_iter(match="ergon:inv:*"):
             data = await self._redis.hgetall(key)
             if not data:
                 continue
 
-            # Parse invocation
             inv = self._parse_invocation(data)
 
-            # Filter: step 0 and not complete
             if inv.step == 0 and inv.status != InvocationStatus.COMPLETE:
                 incomplete.append(inv)
 
         return incomplete
 
     async def has_non_retryable_error(self, flow_id: str) -> bool:
-        """
-        Check if flow has non-retryable error.
+        """Check if flow has non-retryable error.
 
-        From Dave Cheney: "Eliminate error handling by eliminating errors"
-        Boolean return, no exceptions.
+        Returns boolean, no exceptions.
         """
         self._check_connected()
 
         inv_list_key = self._invocations_key(flow_id)
-
-        # Get all invocation keys
         inv_keys = await self._redis.lrange(inv_list_key, 0, -1)
 
         for key in inv_keys:
@@ -375,17 +309,10 @@ class RedisExecutionLog(ExecutionLog):
 
         return False
 
-    # ========================================================================
-    # Queue Operations - Distributed Work Queue
-    # ========================================================================
-
     async def enqueue_flow(self, flow: ScheduledFlow) -> str:
-        """
-        Add a flow to the distributed work queue.
+        """Add a flow to the distributed work queue.
 
-        **Rust Reference**: redis.rs lines 858-980
-
-        From Rust ergon: Atomic MULTI/EXEC to store metadata + enqueue.
+        Atomic MULTI/EXEC to store metadata and enqueue.
         Uses RPUSH for FIFO ordering, or ZADD for delayed execution.
         """
         self._check_connected()
@@ -394,11 +321,9 @@ class RedisExecutionLog(ExecutionLog):
         flow_key = self._flow_key(task_id)
         now = datetime.now(UTC)
 
-        # Check if flow should be delayed
         if flow.scheduled_for:
             scheduled_ts_ms = int(flow.scheduled_for.timestamp() * 1000)
 
-            # Store flow metadata and add to delayed queue
             async with self._redis.pipeline(transaction=True) as pipe:
                 await pipe.hset(flow_key, "task_id", task_id)
                 await pipe.hset(flow_key, "flow_id", flow.flow_id)
@@ -417,17 +342,11 @@ class RedisExecutionLog(ExecutionLog):
                 if flow.version:
                     await pipe.hset(flow_key, "version", flow.version)
 
-                # Create flow_id -> task_id index for resume_flow
                 await pipe.set(f"ergon:flow_task_map:{flow.flow_id}", task_id)
-
-                # Add to delayed queue
                 await pipe.zadd("ergon:queue:delayed", {task_id: scheduled_ts_ms})
-
                 await pipe.execute()
         else:
-            # Immediate execution - store and enqueue
             async with self._redis.pipeline(transaction=True) as pipe:
-                # Store flow metadata as HASH
                 await pipe.hset(flow_key, "task_id", task_id)
                 await pipe.hset(flow_key, "flow_id", flow.flow_id)
                 await pipe.hset(flow_key, "flow_type", flow.flow_type)
@@ -444,35 +363,27 @@ class RedisExecutionLog(ExecutionLog):
                 if flow.version:
                     await pipe.hset(flow_key, "version", flow.version)
 
-                # Create flow_id -> task_id index for resume_flow
                 await pipe.set(f"ergon:flow_task_map:{flow.flow_id}", task_id)
-
-                # Add to pending queue (FIFO)
                 await pipe.rpush("ergon:queue:pending", task_id)
-
                 await pipe.execute()
 
-            # Wake up one waiting worker (if any)
-            # **Rust Reference**: redis.rs line 976
-            # NOTE: Don't clear here! Worker clears after waking up.
-            # Clearing immediately would lose the notification if worker isn't waiting yet.
+            # Wake up waiting worker
+            # Don't clear here - worker clears after waking up
             self._work_notify.set()
 
         return task_id
 
     async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
-        """
-        Claim and retrieve a pending flow from the queue.
+        """Claim and retrieve a pending flow from the queue.
 
-        From Rust ergon: Uses BLPOP for efficient blocking dequeue.
-        Atomic update of status + locked_by.
+        Uses BLPOP for efficient blocking dequeue with atomic update
+        of status and locked_by.
 
-        Design Pattern: Observer Pattern
+        Design: Observer Pattern
         Workers block on queue until work available.
         """
         self._check_connected()
 
-        # Blocking pop with 1 second timeout
         result = await self._redis.blpop("ergon:queue:pending", timeout=1.0)
 
         if result is None:
@@ -485,41 +396,30 @@ class RedisExecutionLog(ExecutionLog):
         now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
-        # Check if flow is ready (scheduled_for has passed)
         scheduled_for_bytes = await self._redis.hget(flow_key, "scheduled_for")
 
         if scheduled_for_bytes:
             scheduled_for_ms = int(scheduled_for_bytes.decode())
             scheduled_for = datetime.fromtimestamp(scheduled_for_ms / 1000, tz=UTC)
             if scheduled_for > now:
-                # Not ready yet, push back to queue
                 await self._redis.rpush("ergon:queue:pending", task_id)
                 return None
 
-        # Atomic: update status + lock + add to running index
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(flow_key, "status", TaskStatus.RUNNING.value)
             await pipe.hset(flow_key, "locked_by", worker_id)
             await pipe.hset(flow_key, "updated_at", now_ts)
             await pipe.hset(flow_key, "claimed_at", now_ts)
-
-            # Add to running index (sorted set, score = start time)
             await pipe.zadd("ergon:running", {task_id: now_ts})
-
             await pipe.execute()
 
-        # Fetch flow metadata
         data = await self._redis.hgetall(flow_key)
         return self._parse_scheduled_flow(data)
 
     async def complete_flow(
         self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
-        """
-        Mark a flow task as complete or failed.
-
-        From Dave Cheney: "Eliminate error handling by eliminating errors"
-        Type system enforces status must be TaskStatus.
+        """Mark a flow task as complete or failed.
 
         Args:
             task_id: The task identifier
@@ -528,13 +428,11 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        # Guard: Validate terminal status
         if not status.is_terminal:
             raise ValueError(f"Status must be terminal (COMPLETE/FAILED), got {status}")
 
         flow_key = self._flow_key(task_id)
 
-        # Check existence
         exists = await self._redis.exists(flow_key)
         if not exists:
             raise StorageError(f"Flow not found: task_id={task_id}")
@@ -542,7 +440,6 @@ class RedisExecutionLog(ExecutionLog):
         now = datetime.now(UTC)
         now_ts = int(now.timestamp())
 
-        # Atomic: update status + remove from running index
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(flow_key, "status", status.value)
             await pipe.hset(flow_key, "completed_at", now_ts)
@@ -550,17 +447,13 @@ class RedisExecutionLog(ExecutionLog):
             if error_message is not None:
                 await pipe.hset(flow_key, "error_message", error_message)
 
-            # Remove from running index
             await pipe.zrem("ergon:running", task_id)
-
             await pipe.execute()
 
     async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
-        """
-        Retrieve a scheduled flow by task ID.
+        """Retrieve a scheduled flow by task ID.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
-        Check existence → None if not found → return result.
+        Returns None if not found.
         """
         self._check_connected()
 
@@ -573,17 +466,12 @@ class RedisExecutionLog(ExecutionLog):
         data = await self._redis.hgetall(flow_key)
         return self._parse_scheduled_flow(data)
 
-    # ========================================================================
-    # Timer Operations - Durable Timers
-    # ========================================================================
-
     async def log_timer(
         self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
-        """
-        Schedule a durable timer.
+        """Schedule a durable timer.
 
-        From Rust ergon: Uses ZADD to sorted set for efficient expiry queries.
+        Uses ZADD to sorted set for efficient expiry queries.
         Score = fire_at timestamp for range queries.
         """
         self._check_connected()
@@ -591,44 +479,34 @@ class RedisExecutionLog(ExecutionLog):
         inv_key = self._invocation_key(flow_id, step)
         fire_at_millis = int(timer_fire_at.timestamp() * 1000)
 
-        # Atomic: update invocation + add to timers sorted set
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hset(inv_key, "status", InvocationStatus.WAITING_FOR_TIMER.value)
             await pipe.hset(inv_key, "fire_at", fire_at_millis)
             await pipe.hset(inv_key, "timer_name", timer_name or "")
 
-            # Add to sorted set (score = fire_at_millis)
             timer_member = f"{flow_id}:{step}"
             await pipe.zadd("ergon:timers:pending", {timer_member: fire_at_millis})
-
             await pipe.execute()
 
-        # Notify timer processor that a new timer was scheduled
-        # **Rust Reference**: redis.rs line 1438
+        # Notify timer processor
         self._timer_notify.set()
-        self._timer_notify.clear()  # Reset for next notification
+        self._timer_notify.clear()
 
     async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
-        """
-        Get all timers that have expired.
-
-        **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
+        """Get all timers that have expired.
 
         Returns TimerInfo objects with flow_id, step, fire_at, and timer_name.
         """
-
         self._check_connected()
 
         now_millis = int(now.timestamp() * 1000)
 
-        # Query sorted set for timers with score <= now_millis
         expired = await self._redis.zrangebyscore(
             "ergon:timers:pending", 0, now_millis, withscores=True, start=0, num=100
         )
 
         timers = []
         for member, score in zip(expired[::2], expired[1::2]):
-            # member format: "flow_id:step"
             parts = member.decode().split(":")
             if len(parts) != 2:
                 continue
@@ -636,7 +514,6 @@ class RedisExecutionLog(ExecutionLog):
             flow_id = parts[0]
             try:
                 step = int(parts[1])
-                # Get timer details from invocation
                 inv_key = f"ergon:inv:{flow_id}:{step}"
                 inv_data = await self._redis.hgetall(inv_key)
                 timer_name = inv_data.get(b"timer_name", b"").decode() if inv_data else None
@@ -651,13 +528,12 @@ class RedisExecutionLog(ExecutionLog):
         return timers
 
     async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
-        """
-        Atomically claim a timer.
+        """Atomically claim a timer.
 
-        From Rust ergon: Uses Lua script for atomic check-and-update.
+        Uses Lua script for atomic check-and-update.
         Ensures only one worker claims each timer.
 
-        Design Pattern: Optimistic Concurrency Control
+        Design: Optimistic Concurrency Control
         Lua script ensures atomicity without locks.
         """
         self._check_connected()
@@ -665,7 +541,6 @@ class RedisExecutionLog(ExecutionLog):
         inv_key = self._invocation_key(flow_id, step)
         timer_member = f"{flow_id}:{step}"
 
-        # Lua script for atomic claim
         script = """
         local inv_key = KEYS[1]
         local timer_key = KEYS[2]
@@ -684,39 +559,31 @@ class RedisExecutionLog(ExecutionLog):
         end
         """
 
-        # Unit value for timer completion
         unit_value = pickle.dumps(None)
 
-        # Execute Lua script
         claimed = await self._redis.eval(
             script,
-            2,  # Number of keys
+            2,
             inv_key,
             "ergon:timers:pending",
             timer_member,
             unit_value,
         )
 
-        # Notify timer processor if we successfully claimed a timer
-        # **Rust Reference**: redis.rs lines 1380-1382
         if claimed == 1:
             self._timer_notify.set()
-            self._timer_notify.clear()  # Reset for next notification
+            self._timer_notify.clear()
 
         return claimed == 1
 
     async def get_next_timer_fire_time(self) -> datetime | None:
-        """
-        Get the next timer fire time from the pending timers sorted set.
-
-        **Rust Reference**: redis.rs lines 1387-1407
+        """Get the next timer fire time from the pending timers sorted set.
 
         Returns:
             Timestamp of the next timer to fire, or None if no timers pending
         """
         self._check_connected()
 
-        # Get the first entry from sorted set (lowest score = earliest timer)
         result = await self._redis.zrange("ergon:timers:pending", 0, 0, withscores=True)
 
         if result:
@@ -725,15 +592,8 @@ class RedisExecutionLog(ExecutionLog):
 
         return None
 
-    # ========================================================================
-    # Signal Operations
-    # ========================================================================
-
     async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
-        """
-        Log that an invocation is waiting for a signal.
-
-        **Rust Reference**: redis.rs lines 1443-1466
+        """Log that an invocation is waiting for a signal.
 
         Updates invocation status to WAITING_FOR_SIGNAL and stores signal_name.
         """
@@ -752,10 +612,7 @@ class RedisExecutionLog(ExecutionLog):
     async def store_suspension_result(
         self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
-        """
-        Store the result of a suspension (signal or timer completion).
-
-        **Rust Reference**: redis.rs lines 1536-1561
+        """Store the result of a suspension (signal or timer completion).
 
         Args:
             flow_id: Flow identifier
@@ -765,19 +622,13 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        # Include suspension_key to support multiple suspensions at same step
         key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
-
-        # Store with TTL (30 days default)
         await self._redis.setex(key, 30 * 24 * 3600, result)
 
     async def get_suspension_result(
         self, flow_id: str, step: int, suspension_key: str
     ) -> bytes | None:
-        """
-        Retrieve the result of a suspension.
-
-        **Rust Reference**: redis.rs lines 1563-1578
+        """Retrieve the result of a suspension.
 
         Returns:
             Serialized result if available, None otherwise
@@ -788,21 +639,14 @@ class RedisExecutionLog(ExecutionLog):
         return await self._redis.get(key)
 
     async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
-        """
-        Remove a suspension result after it's been consumed.
-
-        **Rust Reference**: redis.rs lines 1580-1599
-        """
+        """Remove a suspension result after it's been consumed."""
         self._check_connected()
 
         key = f"ergon:suspension:{flow_id}:{step}:{suspension_key}"
         await self._redis.delete(key)
 
     async def get_waiting_signals(self) -> list:
-        """
-        Get all invocations waiting for signals.
-
-        **Rust Reference**: redis.rs lines 1601-1659
+        """Get all invocations waiting for signals.
 
         Returns:
             List of SignalInfo tuples (flow_id, step, signal_name)
@@ -811,12 +655,10 @@ class RedisExecutionLog(ExecutionLog):
 
         signals = []
 
-        # Scan for all invocation keys
         async for inv_key in self._redis.scan_iter(match="ergon:inv:*"):
             status = await self._redis.hget(inv_key, "status")
 
             if status and status.decode() == InvocationStatus.WAITING_FOR_SIGNAL.value:
-                # Parse key format: "ergon:inv:flow_id:step"
                 parts = inv_key.decode().split(":")
                 if len(parts) == 4:
                     flow_id = parts[2]
@@ -834,11 +676,7 @@ class RedisExecutionLog(ExecutionLog):
         return signals
 
     async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
-        """
-        Update the is_retryable flag for an invocation.
-
-        **Rust Reference**: redis.rs lines 792-803
-        """
+        """Update the is_retryable flag for an invocation."""
         self._check_connected()
 
         inv_key = self._invocation_key(flow_id, step)
@@ -847,10 +685,7 @@ class RedisExecutionLog(ExecutionLog):
         await self._redis.hset(inv_key, "is_retryable", value)
 
     async def resume_flow(self, flow_id: str) -> bool:
-        """
-        Resume a suspended flow (after signal or timer completion).
-
-        **Rust Reference**: redis.rs lines 1468-1532
+        """Resume a suspended flow (after signal or timer completion).
 
         Uses flow_id -> task_id index for O(1) lookup.
         Atomically checks SUSPENDED status and updates to PENDING.
@@ -861,7 +696,6 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        # O(1) lookup using flow_id -> task_id index
         task_id = await self._redis.get(f"ergon:flow_task_map:{flow_id}")
 
         if not task_id:
@@ -870,7 +704,6 @@ class RedisExecutionLog(ExecutionLog):
         task_id = task_id.decode()
         flow_key = self._flow_key(task_id)
 
-        # Atomic check-and-update using Lua script
         script = """
         local flow_key = KEYS[1]
         local now = ARGV[1]
@@ -891,12 +724,10 @@ class RedisExecutionLog(ExecutionLog):
         resumed = await self._redis.eval(script, 1, flow_key, int(now))
 
         if resumed == 1:
-            # Re-enqueue to pending queue
             await self._redis.rpush("ergon:queue:pending", task_id)
 
-            # Wake up one waiting worker since we just made a flow available
-            # **Rust Reference**: redis.rs line 1521
-            # NOTE: Don't clear here! Worker clears after waking up.
+            # Wake up waiting worker
+            # Don't clear here - worker clears after waking up
             self._work_notify.set()
 
             return True
@@ -904,10 +735,7 @@ class RedisExecutionLog(ExecutionLog):
         return False
 
     async def retry_flow(self, task_id: str, error_message: str, delay_seconds: int) -> None:
-        """
-        Retry a failed flow after a delay.
-
-        **Rust Reference**: redis.rs lines 1121-1166
+        """Retry a failed flow after a delay.
 
         Updates flow metadata, increments retry_count, and adds to delayed queue.
         """
@@ -919,7 +747,6 @@ class RedisExecutionLog(ExecutionLog):
 
         now = datetime.now(UTC).timestamp()
 
-        # Update flow and add to delayed queue
         async with self._redis.pipeline(transaction=True) as pipe:
             await pipe.hincrby(flow_key, "retry_count", 1)
             await pipe.hset(flow_key, "error_message", error_message)
@@ -930,21 +757,16 @@ class RedisExecutionLog(ExecutionLog):
             await pipe.zadd("ergon:queue:delayed", {task_id: scheduled_for_ms})
             await pipe.execute()
 
-        # Notify workers that new work is available (or will be available soon)
-        # **Rust Reference**: Similar to SQLite implementation
         self._work_notify.set()
-        self._work_notify.clear()  # Reset for next notification
+        self._work_notify.clear()
 
     async def reset(self) -> None:
-        """
-        Reset all ergon data (clear all keys).
+        """Reset all ergon data (clear all keys).
 
-        From Dave Cheney: "Be cautious with destructive operations"
         Only deletes ergon:* keys, doesn't affect other Redis data.
         """
         self._check_connected()
 
-        # Scan and delete all ergon keys
         keys = []
         async for key in self._redis.scan_iter(match="ergon:*"):
             keys.append(key)
@@ -952,27 +774,14 @@ class RedisExecutionLog(ExecutionLog):
         if keys:
             await self._redis.delete(*keys)
 
-    # ========================================================================
-    # Helpers - Parsing and Conversion
-    # ========================================================================
-
     async def _get_invocation_by_key(self, key: str) -> Invocation:
-        """
-        Fetch and parse invocation from Redis HASH.
-
-        From Dave Cheney: "Keep functions small and focused"
-        Single responsibility: fetch + parse.
-        """
+        """Fetch and parse invocation from Redis HASH."""
         data = await self._redis.hgetall(key)
         return self._parse_invocation(data)
 
     def _parse_invocation(self, data: dict) -> Invocation:
-        """
-        Parse invocation from Redis HASH data.
+        """Parse invocation from Redis HASH data.
 
-        **Rust Reference**: redis.rs lines 1329-1445
-
-        From Dave Cheney: "Errors are values"
         Returns Invocation or raises StorageError.
         """
         try:
@@ -988,7 +797,6 @@ class RedisExecutionLog(ExecutionLog):
             is_retryable_str = data.get(b"is_retryable", b"1").decode()
             is_retryable = is_retryable_str == "1" if is_retryable_str else None
 
-            # Parse Unix timestamps
             created_at_ts = int(data[b"created_at"].decode())
             timestamp = datetime.fromtimestamp(created_at_ts, tz=UTC)
 
@@ -1042,13 +850,9 @@ class RedisExecutionLog(ExecutionLog):
             raise StorageError(f"Failed to parse invocation: {e}")
 
     def _parse_scheduled_flow(self, data: dict) -> ScheduledFlow:
-        """
-        Parse scheduled flow from Redis HASH data.
+        """Parse scheduled flow from Redis HASH data.
 
-        **Rust Reference**: redis.rs lines 1168-1277
-
-        From Dave Cheney: "Return early rather than nesting deeply"
-        Simple parse → return result.
+        Returns ScheduledFlow or raises StorageError.
         """
         try:
             task_id = data[b"task_id"].decode()
@@ -1113,18 +917,11 @@ class RedisExecutionLog(ExecutionLog):
         except (KeyError, ValueError, UnicodeDecodeError) as e:
             raise StorageError(f"Failed to parse scheduled flow: {e}")
 
-    # ========================================================================
-    # Notification Sources - Event-Driven Wakeup
-    # ========================================================================
-
     def work_notify(self) -> asyncio.Event:
-        """
-        Return event for work notifications (WorkNotificationSource protocol).
+        """Return event for work notifications.
 
-        **Rust Reference**: `src/storage/redis.rs` lines 1891-1895
-
-        Workers use this to wait for work instead of polling. This event is set
-        when new work is enqueued or flows are resumed.
+        Workers use this to wait for work instead of polling. Set when
+        new work is enqueued or flows are resumed.
 
         Returns:
             asyncio.Event that workers wait on
@@ -1132,13 +929,10 @@ class RedisExecutionLog(ExecutionLog):
         return self._work_notify
 
     def timer_notify(self) -> asyncio.Event:
-        """
-        Return event for timer notifications (TimerNotificationSource protocol).
+        """Return event for timer notifications.
 
-        **Rust Reference**: `src/storage/redis.rs` lines 1897-1901
-
-        Timer processors use this to wake up when timers are scheduled or claimed,
-        instead of polling at fixed intervals.
+        Timer processors use this to wake up when timers are scheduled
+        or claimed, instead of polling at fixed intervals.
 
         Returns:
             asyncio.Event that timer processors wait on
@@ -1146,13 +940,10 @@ class RedisExecutionLog(ExecutionLog):
         return self._timer_notify
 
     def status_notify(self) -> asyncio.Event:
-        """
-        Return event for flow status change notifications.
+        """Return event for flow status change notifications.
 
-        **Rust Reference**: `src/storage/redis.rs` lines 1904-1910
-
-        Callers can use this to wait for flow status changes (completion, failure, etc.)
-        instead of polling.
+        Callers can use this to wait for flow status changes instead
+        of polling.
 
         Returns:
             asyncio.Event that is set when any flow status changes

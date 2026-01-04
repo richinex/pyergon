@@ -1,78 +1,52 @@
-"""
-Call type enum for step execution modes.
+"""Execution mode enum for step invocations.
 
-This module defines CallType which distinguishes between different execution modes:
-- Run: First execution of a step
-- Await: Step is waiting (returned None)
-- Resume: Step is resuming after wait
-
-RUST COMPLIANCE: Matches Rust ergon src/core/invocation.rs:43-48
-
-From Rust:
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum CallType {
-        Run,    // First execution
-        Await,  // Waiting for signal/timer
-        Resume, // Resuming from wait
-    }
-
-Design: Simple enum with clear semantics, used by Context
-to track execution mode in task-local storage.
+Tracks whether a step is executing for the first time, waiting
+for an event, or resuming after suspension.
 """
 
 from enum import Enum
 
 
 class CallType(Enum):
-    """
-    Execution mode for a step invocation.
+    """Execution mode for step invocations.
 
-    This enum tracks whether a step is being executed for the first time,
-    is in a waiting state, or is resuming after waiting.
+    Distinguishes between first execution, waiting state, and resumption
+    after suspension. Used by Context to track execution mode in
+    task-local storage.
 
-    Values:
-        RUN: First execution of the step (normal case)
-        AWAIT: Step returned None, waiting for external event
-        RESUME: Step is resuming after signal or timer
+    Example:
+        ```python
+        from pyergon.core import CALL_TYPE, CallType
 
-    From Rust ergon src/core/invocation.rs:
-        pub enum CallType { Run, Await, Resume }
-
-    Usage:
         # Set call type in task-local context
         CALL_TYPE.set(CallType.RUN)
 
-        # Check call type
-        call_type = CALL_TYPE.get()
-        if call_type == CallType.AWAIT:
-            # Handle waiting case
+        # Check current call type
+        if CALL_TYPE.get() == CallType.AWAIT:
+            # Step is waiting for event
             pass
+        ```
     """
 
     RUN = "run"
-    """First execution of a step.
+    """First execution or retry attempt.
 
-    This is the normal case - step has not been executed before,
-    or is being retried after failure.
+    Step has not been executed before, or is being retried after failure.
     """
 
     AWAIT = "await"
-    """Step is waiting for external event.
+    """Step is waiting for external event (signal or timer).
 
-    Step function returned None, indicating it wants to wait
-    for an external signal or timer before continuing.
-
-    The step will be marked as WAITING_FOR_SIGNAL or WAITING_FOR_TIMER
-    in storage and execution will pause.
+    Step function returned None to indicate suspension. Flow will be
+    marked WAITING_FOR_SIGNAL or WAITING_FOR_TIMER and paused until
+    the event occurs.
     """
 
     RESUME = "resume"
-    """Step is resuming after waiting.
+    """Step is resuming after suspension.
 
-    The external signal/timer has fired and the step is being
-    re-executed with the resume parameters.
-
-    This allows steps to continue from where they left off.
+    External signal or timer has fired, and step is re-executing
+    from where it left off with resume parameters.
     """
 
     def __str__(self) -> str:

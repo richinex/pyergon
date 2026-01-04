@@ -21,13 +21,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.executor.timer import schedule_timer_named
 from pyergon.storage import InMemoryExecutionLog
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -36,6 +35,7 @@ logger = logging.getLogger(__name__)
 @flow_type
 class TimedOrderProcessor:
     """An order processing flow with timed delays."""
+
     order_id: str
     customer: str
     amount: float
@@ -105,6 +105,7 @@ class TimedOrderProcessor:
 @flow_type
 class TrialExpiryNotification:
     """A trial expiry notification flow with timer."""
+
     user_id: str
     email: str
 
@@ -180,19 +181,14 @@ async def main():
     # Schedule order processing flows
     for i in range(1, 4):
         order = TimedOrderProcessor(
-            order_id=f"ORD-{i:03d}",
-            customer=f"Customer {i}",
-            amount=100.0 * i
+            order_id=f"ORD-{i:03d}", customer=f"Customer {i}", amount=100.0 * i
         )
         await scheduler.schedule(order)
 
     print("Scheduling 2 trial expiry flows...")
     # Schedule trial expiry flows
     for i in range(1, 3):
-        trial = TrialExpiryNotification(
-            user_id=f"user-{i}",
-            email=f"user{i}@example.com"
-        )
+        trial = TrialExpiryNotification(user_id=f"user-{i}", email=f"user{i}@example.com")
         await scheduler.schedule(trial)
 
     print("\n2 workers running. Processing 5 flows with timers...")
@@ -205,14 +201,11 @@ async def main():
     # Wait for all flows to complete with timeout
     timeout_duration = 30.0
     try:
-        await asyncio.wait_for(
-            wait_for_completion(storage),
-            timeout=timeout_duration
-        )
+        await asyncio.wait_for(wait_for_completion(storage), timeout=timeout_duration)
         print("\n" + "=" * 60)
         print("SUCCESS: All flows completed!")
         print("=" * 60)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         incomplete = await storage.get_incomplete_flows()
         print(f"\nTimeout - Incomplete flows: {len(incomplete)}")
         for inv in incomplete:

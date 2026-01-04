@@ -1,23 +1,14 @@
-"""
-External signal handling module.
+"""External signal handling for flow coordination.
 
-This module provides:
-- External signal coordination (wait/resume mechanism)
+Provides:
+- Wait/resume mechanism for external events
 - Global state management for waiting flows
-- Support for flows that need to pause for external events
+- Support for pausing flows until external events occur
 
-Following Parnas's information hiding principle, this module encapsulates
-decisions about how signals are coordinated across flow executions.
-
-**Design**:
-- Uses asyncio.Event for async notification (equivalent to tokio::sync::Notify)
-- Global dictionaries track waiting flows and resume parameters
-- Flows can await external events (email confirmation, webhooks, etc.)
-
-**Rust Compliance**: 100%
-- Matches ergon/src/executor/signal.rs exactly
-- Equivalent to Rust's WAIT_NOTIFIERS (DashMap) and RESUME_PARAMS
-- Uses asyncio.Event instead of tokio::sync::Notify
+Design: Information Hiding (Parnas)
+Encapsulates decisions about signal coordination across flow
+executions. Uses asyncio.Event for async notification and
+global dictionaries to track waiting flows and resume parameters.
 """
 
 import asyncio
@@ -29,38 +20,33 @@ from pyergon.core import CallType, get_current_context
 from pyergon.models import InvocationStatus
 
 # Global state for signal coordination
-# These are module-level to ensure visibility across all flow executions
-# Using string flow_id as key (Python uses string IDs, not UUIDs like Rust)
+# Module-level to ensure visibility across all flow executions
 _wait_notifiers: dict[str, asyncio.Event] = {}
 _resume_params: dict[str, bytes] = {}
 
-# Lock for thread-safe access to global dictionaries
+# Lock for thread-safe access to dictionaries
 _lock = asyncio.Lock()
 
 R = TypeVar("R")
 
 
 async def await_external_signal(signal_name: str) -> bytes:
-    """
-    Await an external signal by name (simplified Rust-matching API).
+    """Await an external signal by name.
 
-    **Rust Reference**: `src/executor/signal.rs` lines 242-314
-
-    This function suspends the flow until a signal with the given name arrives.
+    Suspends the flow until a signal with the given name arrives.
     Returns the raw signal data as bytes (caller must deserialize).
 
     Args:
         signal_name: Name of the signal to wait for
 
     Returns:
-        bytes: The signal data (must be deserialized by caller)
+        Signal data bytes
 
     Raises:
         RuntimeError: If called outside execution context
 
     Example:
         ```python
-        # In a step
         data_bytes = await await_external_signal("user_approval")
         approval: ApprovalData = pickle.loads(data_bytes)
         ```
@@ -104,69 +90,54 @@ async def await_external_signal(signal_name: str) -> bytes:
 
 
 async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R | None]]) -> R:
-    """
-    Awaits an external signal before continuing flow execution.
+    """Await an external signal before continuing flow execution.
 
-    This function is used when a step needs to wait for an external event
-    (like email confirmation, payment webhook, manual approval, etc.)
-    before continuing. It:
+    Used when a step needs to wait for an external event (email confirmation,
+    payment webhook, manual approval) before continuing.
 
-    1. Logs the step as `WAITING_FOR_SIGNAL` in the database
-    2. Pauses execution until `signal_resume()` is called
+    Process:
+    1. Logs the step as WAITING_FOR_SIGNAL in the database
+    2. Pauses execution until signal_resume() is called
     3. Returns the value provided in the resume signal
 
-    **Usage Example**:
-    ```python
-    @flow
-    class SignupFlow:
-        @step
-        async def confirm_email(self, timestamp: datetime) -> Optional[datetime]:
-            '''Step that returns None in Await mode, confirmed_at in Resume mode'''
-            call_type = get_current_call_type()
-            if call_type == CallType.AWAIT:
-                # First time - mark as waiting
-                return None
-            elif call_type == CallType.RESUME:
-                # Resuming - return the confirmed timestamp
-                return datetime.now()
-            else:
-                # Normal execution (no signal wait)
-                return timestamp
-
-        async def run(self) -> str:
-            await self.send_confirmation_email()
-
-            # Flow pauses here until user clicks confirmation link
-            confirmed_at = await await_external_signal(
-                lambda: self.confirm_email(datetime.now())
-            )
-
-            await self.activate_account()
-            return f"Account activated at {confirmed_at}"
-    ```
-
-    **Architecture**:
-    - Uses CallType.AWAIT for first execution (step returns None)
-    - Uses CallType.RESUME for resuming (step returns actual value)
-    - Global coordination via asyncio.Event
-
-    **Args**:
-        step_callable: A callable that returns Optional[R]
+    Args:
+        step_callable: Callable that returns Optional[R]
             - Returns None in Await mode (first execution)
             - Returns R in Resume mode (after signal_resume)
 
-    **Returns**:
-        R: The value provided by signal_resume()
+    Returns:
+        Value provided by signal_resume()
 
-    **Raises**:
+    Raises:
         RuntimeError: If called outside execution context
         RuntimeError: If no resume parameters found
-        RuntimeError: If step returns None in Resume mode (framework bug)
+        RuntimeError: If step returns None in Resume mode
 
-    **Rust Compliance**: 100%
-    - Matches ergon::executor::await_external_signal exactly
-    - Same await/resume pattern using CallType
-    - Equivalent notification mechanism
+    Example:
+        ```python
+        @flow
+        class SignupFlow:
+            @step
+            async def confirm_email(self, timestamp: datetime) -> Optional[datetime]:
+                call_type = get_current_call_type()
+                if call_type == CallType.AWAIT:
+                    return None
+                elif call_type == CallType.RESUME:
+                    return datetime.now()
+                else:
+                    return timestamp
+
+            async def run(self) -> str:
+                await self.send_confirmation_email()
+
+                # Flow pauses here until user clicks confirmation link
+                confirmed_at = await await_external_signal(
+                    lambda: self.confirm_email(datetime.now())
+                )
+
+                await self.activate_account()
+                return f"Account activated at {confirmed_at}"
+        ```
     """
     ctx = get_current_context()
     if ctx is None:
@@ -215,19 +186,18 @@ async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R
 
 
 async def _await_signal(flow_id: str) -> Any:
-    """
-    Wait for an external signal to resume flow execution.
+    """Wait for external signal to resume flow execution.
 
-    This is an internal function called by await_external_signal to block
-    until a signal is received via signal_resume.
+    Internal function that blocks until a signal is received
+    via signal_resume.
 
-    **Args**:
-        flow_id: The flow ID to wait for (string, not UUID)
+    Args:
+        flow_id: The flow ID to wait for
 
-    **Returns**:
-        The deserialized parameter value from signal_resume
+    Returns:
+        Deserialized parameter value from signal_resume
 
-    **Raises**:
+    Raises:
         RuntimeError: If no resume parameters found
     """
     # Get or create notifier
@@ -254,44 +224,32 @@ async def _await_signal(flow_id: str) -> Any:
 
 
 def signal_resume(flow_id: str, params: Any) -> None:
-    """
-    Resume a flow that is waiting for an external signal.
+    """Resume a flow that is waiting for an external signal.
 
-    This function is called from outside the flow (e.g., from a webhook handler,
-    background task, or manual admin action) to provide the awaited value and
-    resume execution.
+    Called from outside the flow (webhook handler, background task,
+    or manual admin action) to provide the awaited value and resume
+    execution.
 
-    **Usage Example**:
-    ```python
-    # In webhook handler
-    @app.post("/confirm-email")
-    async def confirm_email_webhook(flow_id: str):
-        confirmed_at = datetime.now()
-
-        # Resume the waiting flow
-        signal_resume(flow_id, confirmed_at)
-
-        # Re-execute the flow (it will resume from the waiting step)
-        storage = get_storage()
-        scheduler = Scheduler(storage)
-        await scheduler.schedule_resume(flow_id)
-
-        return {"status": "confirmed"}
-    ```
-
-    **Architecture**:
-    - Stores serialized parameters in global dictionary
-    - Notifies asyncio.Event to wake up waiting flow
-    - Thread-safe using async lock
-
-    **Args**:
-        flow_id: The flow ID to resume (string)
+    Args:
+        flow_id: The flow ID to resume
         params: The value to return from await_external_signal
 
-    **Rust Compliance**: 100%
-    - Matches FlowInstance::signal_resume exactly
-    - Same notification pattern
-    - Equivalent serialization approach
+    Example:
+        ```python
+        @app.post("/confirm-email")
+        async def confirm_email_webhook(flow_id: str):
+            confirmed_at = datetime.now()
+
+            # Resume the waiting flow
+            signal_resume(flow_id, confirmed_at)
+
+            # Re-execute the flow (resumes from waiting step)
+            storage = get_storage()
+            scheduler = Scheduler(storage)
+            await scheduler.schedule_resume(flow_id)
+
+            return {"status": "confirmed"}
+        ```
     """
     # Serialize parameters
     params_bytes = pickle.dumps(params)
@@ -302,14 +260,13 @@ def signal_resume(flow_id: str, params: Any) -> None:
 
 
 async def _signal_resume_async(flow_id: str, params_bytes: bytes) -> None:
-    """
-    Internal async helper for signal_resume.
+    """Internal async helper for signal_resume.
 
-    This allows signal_resume to be called from sync contexts while
+    Allows signal_resume to be called from sync contexts while
     still properly coordinating with async locks.
 
-    **Args**:
-        flow_id: The flow ID to resume (string, not UUID)
+    Args:
+        flow_id: The flow ID to resume
         params_bytes: Serialized parameters
     """
     async with _lock:

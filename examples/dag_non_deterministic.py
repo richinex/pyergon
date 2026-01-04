@@ -15,10 +15,10 @@ PYTHONPATH=src python examples/dag_non_deterministic.py
 """
 
 import asyncio
-from pyergon import flow, step, Executor
+
+from pyergon import Executor, flow, step
 from pyergon.executor.outcome import Completed
 from pyergon.storage.sqlite import SqliteExecutionLog
-
 
 # Simulates external state that changes between runs
 HAS_DISCOUNT_CODE = True
@@ -65,10 +65,7 @@ class PaymentProcessor:
             print("  [validate_card] OK")
             return "validated"
 
-    @step(
-        depends_on=["apply_discount", "validate_card"],
-        inputs={'amount': 'apply_discount'}
-    )
+    @step(depends_on=["apply_discount", "validate_card"], inputs={"amount": "apply_discount"})
     async def send_receipt(self, amount: float) -> str:
         """Send receipt with final amount."""
         print(f"  [send_receipt] Sending confirmation for ${amount:.2f}")
@@ -129,11 +126,7 @@ async def main():
 
     processor1 = PaymentProcessor(amount=100.0)
 
-    executor1 = Executor(
-        flow=processor1,
-        storage=storage,
-        flow_id=flow_id
-    )
+    executor1 = Executor(flow=processor1, storage=storage, flow_id=flow_id)
 
     discount1 = "SAVE20" if HAS_DISCOUNT_CODE else None
     result1 = await executor1.execute(lambda f: f.process_payment(discount1))
@@ -166,7 +159,7 @@ async def main():
     executor2 = Executor(
         flow=processor2,
         storage=storage,
-        flow_id=flow_id  # Same flow_id - will replay
+        flow_id=flow_id,  # Same flow_id - will replay
     )
 
     print("Attempting to replay flow with different parameters...")
@@ -179,7 +172,7 @@ async def main():
         # Check if result is actually an exception
         if isinstance(result2.result, Exception):
             e = result2.result
-            print(f"[PASS] NON-DETERMINISM DETECTED!")
+            print("[PASS] NON-DETERMINISM DETECTED!")
             print(f"  Error: {e}")
             print()
             print("=" * 70)
@@ -201,7 +194,7 @@ async def main():
             print("      return get_discount_for_customer(self.customer_id)")
         elif isinstance(result2.result, str) and "Non-deterministic" in result2.result:
             # Result is error message as string
-            print(f"[PASS] NON-DETERMINISM DETECTED!")
+            print("[PASS] NON-DETERMINISM DETECTED!")
             print(f"  Error: {result2.result}")
             print()
             print("=" * 70)

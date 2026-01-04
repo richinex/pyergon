@@ -1,21 +1,13 @@
-"""
-Flow execution outcome handling.
+"""Flow execution outcome handling.
 
-**Rust Reference**:
-`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs`
+Handles three flow completion paths:
+- Successful completion: signal parent, mark complete
+- Retryable error: schedule retry with exponential backoff
+- Non-retryable error: signal parent, mark failed
 
-This module hides the design decisions around:
-- Retry policies and when to retry failed flows
-- Parent signaling when child flows complete (Level 3 API)
-- Suspension handling for timer/signal workflows
-- Error handling and flow completion
-
-**From Parnas's Principle**: These decisions can change independently
-of the worker loop implementation.
-
-**Python Documentation**:
-- Logging: https://docs.python.org/3/library/logging.html
-- Timedelta: https://docs.python.org/3/library/datetime.html
+Design: Information Hiding (Parnas)
+Retry and signaling logic is isolated here, allowing worker
+loop to remain simple and these policies to evolve independently.
 """
 
 import logging
@@ -43,37 +35,29 @@ async def handle_flow_completion(
     flow_id: str,
     parent_metadata: tuple[str, str] | None,
 ) -> None:
-    """
-    Handle successful flow completion.
+    """Handle successful flow completion.
 
-    **Rust Reference**: `src/executor/execution.rs` lines 349-370
-
-    This function:
-    1. Signals parent flow if this is a child (Level 3 API)
-    2. Marks task as COMPLETE in queue
+    Signals parent flow if this is a child, then marks task
+    as complete in the work queue.
 
     Args:
-        storage: Storage backend
-        worker_id: Worker identifier
-        flow_task_id: Task queue ID
-        flow_id: Flow execution ID
-        parent_metadata: Optional (parent_id, signal_token) for child flows
+        storage: Storage backend for persistence
+        worker_id: Identifier of worker completing the flow
+        flow_task_id: Task identifier in work queue
+        flow_id: Flow execution identifier
+        parent_metadata: Parent flow ID and signal token for child flows
 
     Example:
         ```python
         await handle_flow_completion(
-            storage=storage,
-            worker_id="worker-1",
-            flow_task_id=task_id,
-            flow_id=flow_id,
+            storage, "worker-1", task_id, flow_id,
             parent_metadata=(parent_id, signal_token)
         )
         ```
     """
     logger.info(f"Worker {worker_id} completed flow: task_id={flow_task_id}")
 
-    # Complete child flow (Level 3 API) - signals parent after successful completion
-    # From Rust line 362
+    # Signal parent flow if this is a child flow
     await complete_child_flow(
         storage=storage,
         flow_id=flow_id,
@@ -82,8 +66,7 @@ async def handle_flow_completion(
         error_msg=None,
     )
 
-    # Mark task as complete in queue
-    # From Rust lines 364-369
+    # Mark task as complete in work queue
     try:
         await storage.complete_flow(flow_task_id, TaskStatus.COMPLETE, None)
     except Exception as e:
@@ -98,33 +81,25 @@ async def handle_flow_error(
     error: Exception,
     parent_metadata: tuple[str, str] | None,
 ) -> None:
-    """
-    Handle failed flow, checking retry policy and signaling parent if needed.
+    """Handle failed flow with retry policy and parent signaling.
 
-    **Rust Reference**: `src/executor/execution.rs` lines 373-466
-
-    This function:
-    1. Marks non-retryable errors in storage
-    2. Checks retry policy
-    3. If should retry: Schedule retry with backoff
-    4. If not: Signal parent (if child) and mark as FAILED
+    Marks non-retryable errors, checks retry policy, and either
+    schedules a retry with exponential backoff or signals parent
+    and marks the flow as failed.
 
     Args:
-        storage: Storage backend
-        worker_id: Worker identifier
+        storage: Storage backend for persistence
+        worker_id: Identifier of worker handling the error
         flow: Scheduled flow details
-        flow_task_id: Task queue ID
+        flow_task_id: Task identifier in work queue
         error: The exception that occurred
-        parent_metadata: Optional (parent_id, signal_token) for child flows
+        parent_metadata: Parent flow ID and signal token for child flows
 
     Example:
         ```python
         await handle_flow_error(
-            storage=storage,
-            worker_id="worker-1",
-            flow=scheduled_flow,
-            flow_task_id=task_id,
-            error=ValueError("Processing failed"),
+            storage, "worker-1", scheduled_flow, task_id,
+            ValueError("Processing failed"),
             parent_metadata=None
         )
         ```
@@ -134,16 +109,13 @@ async def handle_flow_error(
     logger.error(f"Worker {worker_id} flow failed: task_id={flow_task_id}, error={error_msg}")
 
     # Mark non-retryable errors in storage
-    # From Rust lines 388-397
-    # Check if error has is_retryable attribute (RetryableError protocol)
     if hasattr(error, "is_retryable") and not error.is_retryable():
         try:
             await storage.update_is_retryable(flow.flow_id, 0, False)
         except Exception as e:
             logger.warning(f"Worker {worker_id} failed to mark error as non-retryable: {e}")
 
-    # Check retry policy
-    # From Rust lines 399-466
+    # Check retry policy and decide whether to retry
     retry_decision = await check_should_retry(storage, flow)
 
     if retry_decision is not None:
@@ -165,8 +137,7 @@ async def handle_flow_error(
             f"(not retryable or max attempts reached)"
         )
 
-        # Complete child flow (Level 3 API) - signals parent after retries exhausted
-        # From Rust lines 424-432
+        # Signal parent flow after retries exhausted
         await complete_child_flow(
             storage=storage,
             flow_id=flow.flow_id,
@@ -175,8 +146,7 @@ async def handle_flow_error(
             error_msg=error_msg,
         )
 
-        # Mark task as failed
-        # From Rust lines 434-439
+        # Mark task as failed in work queue
         try:
             await storage.complete_flow(flow_task_id, TaskStatus.FAILED, error_msg)
         except Exception as e:
@@ -186,30 +156,23 @@ async def handle_flow_error(
 async def handle_suspended_flow(
     storage: ExecutionLog, worker_id: str, flow_task_id: str, flow_id: str, reason: SuspendReason
 ) -> None:
-    """
-    Handle flow suspension for timer or signal.
+    """Handle flow suspension for timer or signal.
 
-    **Rust Reference**: `src/executor/execution.rs` lines 270-347
-
-    This function:
-    1. Marks task as SUSPENDED in queue
-    2. Checks for race condition where signal/timer arrived while suspending
-    3. Resumes flow immediately if result already available
+    Marks task as suspended in queue, then checks for race condition
+    where signal/timer arrived while suspending. Resumes flow
+    immediately if result is already available.
 
     Args:
-        storage: Storage backend
-        worker_id: Worker identifier
-        flow_task_id: Task queue ID
-        flow_id: Flow execution ID
-        reason: Why the flow suspended (timer or signal)
+        storage: Storage backend for persistence
+        worker_id: Identifier of worker handling suspension
+        flow_task_id: Task identifier in work queue
+        flow_id: Flow execution identifier
+        reason: Suspension reason (timer or signal)
 
     Example:
         ```python
         await handle_suspended_flow(
-            storage=storage,
-            worker_id="worker-1",
-            flow_task_id=task_id,
-            flow_id=flow_id,
+            storage, "worker-1", task_id, flow_id,
             reason=SuspendReason(flow_id=flow_id, step=5, signal_name="payment")
         )
         ```
@@ -217,18 +180,15 @@ async def handle_suspended_flow(
     logger.info(f"Worker {worker_id} flow suspended: task_id={flow_task_id}, reason={reason}")
 
     # Mark flow as SUSPENDED so resume_flow() can re-enqueue it
-    # From Rust lines 282-288
     try:
         await storage.complete_flow(flow_task_id, TaskStatus.SUSPENDED, None)
     except Exception as e:
         logger.error(f"Worker {worker_id} failed to mark flow suspended: {e}")
 
-    # Check if signal or timer result arrived while we were still RUNNING
-    # From Rust lines 290-347
-    # This handles a race condition with multiple workers:
+    # Check for race condition: signal/timer arrived while suspending
+    # Race scenario:
     # - Worker A: Parent suspends (RUNNING)
-    # - Worker B: Child completes/timer fires, calls resume_flow()
-    #   → returns False (parent still RUNNING)
+    # - Worker B: Child completes/timer fires, calls resume_flow() returns False (still RUNNING)
     # - Worker A: Marks parent SUSPENDED
     # - Need to check for pending signals/timers and resume immediately
     try:
@@ -263,16 +223,13 @@ async def handle_suspended_flow(
 
 
 async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> timedelta | None:
-    """
-    Check if a flow should be retried based on retry policy.
+    """Check if a flow should be retried based on retry policy.
 
-    **Rust Reference**: `src/executor/execution.rs` lines 195-268
-
-    Gets retry policy from step 0's invocation (NOT from ScheduledFlow).
-    This matches Rust which stores retry_policy in Invocation, not ScheduledFlow.
+    Gets retry policy from step 0's invocation and calculates
+    exponential backoff delay for the next retry attempt.
 
     Returns:
-        timedelta for retry delay if should retry, None if should not retry
+        Retry delay timedelta if should retry, None if should not retry
 
     Example:
         ```python
@@ -283,8 +240,7 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
             await storage.complete_flow(task_id, TaskStatus.FAILED, error_msg)
         ```
     """
-    # First check if any step has a non-retryable error
-    # From Rust lines 206-229
+    # Check if any step has a non-retryable error
     try:
         has_non_retryable = await storage.has_non_retryable_error(flow.flow_id)
         if has_non_retryable:
@@ -299,8 +255,7 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
         logger.warning(f"Failed to check for non-retryable errors for flow {flow.flow_id}: {e}")
         # Continue anyway
 
-    # Get the flow's invocation (step 0) to check retry policy
-    # From Rust lines 231-267
+    # Get flow invocation to check retry policy
     try:
         invocation = await storage.get_invocation(flow.flow_id, 0)
     except Exception as e:
@@ -311,8 +266,7 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
         logger.warning(f"No invocation found for flow {flow.flow_id}")
         return None
 
-    # Get retry policy (explicit or default)
-    # From Rust lines 234-243
+    # Get retry policy from invocation (explicit or default)
     policy = invocation.retry_policy
     if policy is None:
         # No explicit policy, but error is retryable (we passed has_non_retryable_error check)
@@ -328,7 +282,6 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
     next_attempt = flow.retry_count + 1
 
     # Check if we've exceeded max attempts
-    # From Rust lines 217-220: if attempt >= max_attempts, no more retries
     if next_attempt >= policy.max_attempts:
         logger.debug(
             f"Flow {flow.flow_id} exceeded max retry attempts "
@@ -337,7 +290,6 @@ async def check_should_retry(storage: ExecutionLog, flow: ScheduledFlow) -> time
         return None
 
     # Calculate exponential backoff delay
-    # From Rust lines 247-252 (via policy.delay_for_attempt)
     base_delay = policy.initial_delay_ms / 1000.0  # Convert to seconds
     multiplier = policy.backoff_multiplier
     max_delay = policy.max_delay_ms / 1000.0  # Convert to seconds

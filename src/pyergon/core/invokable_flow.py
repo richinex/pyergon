@@ -1,21 +1,11 @@
-"""
-InvokableFlow protocol for child flow invocation.
+"""Protocol for type-safe child flow invocation with output type inference.
 
-**Rust Reference**:
-`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/core/flow_type.rs`
-lines 103-137
+Extends FlowType with an Output type parameter, enabling static type
+checkers to infer child flow result types at compile time.
 
-This module provides the InvokableFlow protocol which extends FlowType
-with an Output type for type-safe parent-child invocation.
-
-**Python Documentation**:
-- Protocol: https://docs.python.org/3/library/typing.html#typing.Protocol
-- Generic: https://docs.python.org/3/library/typing.html#typing.Generic
-- PEP 544: https://peps.python.org/pep-0544/
-
-From Dave Cheney: "Define errors out of existence"
-By using compile-time type checking, we eliminate runtime type errors
-when invoking child flows.
+Design: Eliminate Runtime Type Errors
+    By using Protocol[Output], type checkers catch mismatches before
+    code runs, eliminating a whole class of runtime errors.
 """
 
 from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
@@ -25,137 +15,95 @@ if TYPE_CHECKING:
 
 __all__ = ["InvokableFlow"]
 
-# Type variable for flow output type
-# Bound to object to allow any type
-# Reference: https://docs.python.org/3/library/typing.html#typing.TypeVar
+# Type variable for flow output type (can be any type)
 Output = TypeVar("Output")
 
 
 @runtime_checkable
 class InvokableFlow(Protocol[Output]):
-    """
-    Protocol for flows that can be invoked as child flows.
+    """Protocol for flows that can be invoked as child flows with type safety.
 
-    **Rust Reference**: `src/core/flow_type.rs` lines 131-137
+    Extends FlowType with an Output type parameter for compile-time type
+    inference when parent flows invoke child flows.
 
-    This protocol extends FlowType with an associated Output type,
-    enabling compile-time type inference when invoking child flows.
+    Type Safety Benefits:
+        Static type checkers automatically infer child result types,
+        catching type mismatches before runtime.
 
-    **Python Best Practice**: Using Protocol for structural subtyping
-    Reference: BEST_PRACTICES.md section "Protocols (Structural Subtyping)"
-
-    **Type Safety**:
-    The Output type parameter enables the compiler to infer the child's
-    result type automatically:
-
-    ```python
-    @flow
-    class CheckInventory(InvokableFlow[InventoryStatus]):
-        product_id: str
-
-        @staticmethod
-        def output_type() -> type[InventoryStatus]:
-            return InventoryStatus
-
-        @flow
-        async def run(self) -> InventoryStatus:
-            # Implementation
-            pass
-
-    # Parent can invoke with type inference:
-    @flow
-    class OrderFlow:
-        @flow
-        async def process(self):
-            # Type checker knows inventory is InventoryStatus
-            inventory = await self.invoke(
-                CheckInventory(product_id="PROD-123")
-            ).result()
-    ```
-
-    **Backwards Compatibility**:
-    This protocol is separate from FlowType to maintain backwards
-    compatibility. Existing flows that don't use child invocation
-    don't need to implement this protocol.
+    Backwards Compatibility:
+        Separate from FlowType to avoid breaking existing flows.
+        Only implement this when creating child flows that return results.
 
     Example:
         ```python
         from dataclasses import dataclass
-        from pyergon import flow, InvokableFlow
+        from pyergon import flow_type, flow, InvokableFlow
 
         @dataclass
-        class ShippingLabel:
-            tracking: str
+        class InventoryStatus:
+            available: int
 
-        @flow
-        class LabelFlow(InvokableFlow[ShippingLabel]):
-            parent_id: int
+        @flow_type(invokable=InventoryStatus)
+        class CheckInventory(InvokableFlow[InventoryStatus]):
+            product_id: str
 
             @staticmethod
-            def output_type() -> type[ShippingLabel]:
-                return ShippingLabel
+            def output_type() -> type[InventoryStatus]:
+                return InventoryStatus
 
             @flow
-            async def generate(self) -> ShippingLabel:
-                return ShippingLabel(
-                    tracking=f"TRK-{self.parent_id}"
-                )
+            async def run(self) -> InventoryStatus:
+                return InventoryStatus(available=42)
 
-        # Parent flow invokes child
-        @flow
+        # Parent flow with type inference
+        @flow_type
         class OrderFlow:
             @flow
-            async def run(self):
-                label = await self.invoke(
-                    LabelFlow(parent_id=123)
+            async def process(self):
+                # Type checker knows result is InventoryStatus
+                result = await self.invoke(
+                    CheckInventory(product_id="PROD-123")
                 ).result()
-                # label is type ShippingLabel ✓
+                print(f"Available: {result.available}")
         ```
     """
 
     @staticmethod
     def type_id() -> str:
-        """
-        Return stable type identifier.
-
-        Inherited from FlowType protocol.
-
-        **Rust Reference**: `FlowType::type_id()`
+        """Return stable type identifier (inherited from FlowType).
 
         Returns:
             Stable string identifier for this flow type
 
         Note:
-            This is automatically provided by the @flow decorator.
+            Automatically provided by @flow_type decorator.
         """
         ...
 
     @staticmethod
     def output_type() -> type[Output]:
-        """
-        Return the output type of this flow.
+        """Return the output type of this flow for type inference.
 
-        **Python-Specific Method**:
-        In Rust, this is an associated type `type Output = T`.
-        In Python, we use a method that returns the type object.
-
-        **Type Checking**: Static type checkers can use this for inference
-        Reference: https://docs.python.org/3/library/typing.html#typing.get_type_hints
+        Must be implemented by child flow classes to enable type checking.
 
         Returns:
             Type object for this flow's output
 
         Example:
             ```python
-            @flow
-            class MyFlow(InvokableFlow[MyResult]):
+            @dataclass
+            class OrderResult:
+                order_id: str
+
+            @flow_type(invokable=OrderResult)
+            class ProcessOrder(InvokableFlow[OrderResult]):
                 @staticmethod
-                def output_type() -> type[MyResult]:
-                    return MyResult
+                def output_type() -> type[OrderResult]:
+                    return OrderResult
             ```
 
         Note:
-            Must be implemented by child flow classes.
-            The @flow decorator does NOT generate this automatically.
+            The @flow_type decorator does NOT generate this automatically.
+            You must implement it explicitly.
         """
         ...

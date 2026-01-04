@@ -1,19 +1,12 @@
-"""
-Child flow completion signaling.
+"""Child flow completion signaling.
 
-**Rust Reference**:
-`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/execution.rs`
-lines 34-194
+Provides automatic parent notification when child flows complete.
+When a child flow finishes, this module signals the parent flow
+to resume execution and receive the result.
 
-This module provides automatic parent signaling when child flows complete.
-
-**Python Documentation**:
-- Logging: https://docs.python.org/3/library/logging.html
-- pickle serialization: https://docs.python.org/3/library/pickle.html
-
-From Dave Cheney: "Errors are values"
-We don't raise exceptions on signaling failures - we log and return gracefully,
-allowing the system to continue processing other flows.
+Design: Error Handling
+Signaling failures are logged but don't raise exceptions, allowing
+the system to continue processing other flows gracefully.
 """
 
 import logging
@@ -35,55 +28,33 @@ async def complete_child_flow(
     success: bool,
     error_msg: str | None = None,
 ) -> None:
-    """
-    Signal parent flow when child flow completes.
+    """Signal parent flow when child flow completes.
 
-    **Rust Reference**: `src/executor/execution.rs` lines 34-194
+    Called by the worker when a child flow scheduled via invoke()
+    finishes execution. Handles reading the child's result, packaging
+    it as a signal payload, and resuming the parent flow.
 
-    This is called by the worker when a child flow scheduled via invoke()
-    finishes execution. It handles:
-    - Reading the child's result from storage
-    - Wrapping it in a SuspensionPayload (success/error)
-    - Finding the parent's waiting step via signal token
-    - Storing signal parameters
-    - Resuming the parent flow
-
-    This is an internal method used by Level 3 API automatic parent-child
-    coordination. Users don't call this directly - they use invoke().result().
-
-    **From Rust**:
-    ```rust
-    pub(super) async fn complete_child_flow<S: ExecutionLog>(
-        storage: &Arc<S>,
-        flow_id: Uuid,
-        parent_metadata: Option<(Uuid, String)>,
-        success: bool,
-        error_msg: Option<&str>,
-    )
-    ```
+    Internal method for automatic parent-child coordination. Users
+    interact with this indirectly via invoke().result().
 
     Args:
-        storage: Storage backend
+        storage: Storage backend for persistence
         flow_id: Child flow identifier
-        parent_metadata: Optional (parent_id, signal_token) tuple
-        success: Whether child succeeded
+        parent_metadata: Parent flow ID and signal token for resumption
+        success: Whether child completed successfully
         error_msg: Error message if child failed
 
     Example:
         ```python
-        # Called by Worker after child flow completes
         await complete_child_flow(
-            storage=storage,
-            flow_id=child_flow_id,
+            storage, child_flow_id,
             parent_metadata=(parent_id, signal_token),
-            success=True,
-            error_msg=None
+            success=True
         )
         ```
 
     Note:
-        This function logs errors but doesn't raise exceptions.
-        Failures are logged and the function returns gracefully.
+        Errors are logged but not raised, allowing graceful degradation.
     """
     # Early return if no parent
     if parent_metadata is None:
@@ -91,8 +62,7 @@ async def complete_child_flow(
 
     parent_id, signal_token = parent_metadata
 
-    # Prepare signal payload
-    # From Rust lines 45-115
+    # Prepare signal payload based on child flow outcome
     if success:
         # Read the flow's result from storage (invocation step 0)
         try:
@@ -106,8 +76,7 @@ async def complete_child_flow(
                 logger.error(f"No result bytes for successful flow {flow_id}")
                 return
 
-            # result_bytes contains the actual result value already (pickled)
-            # No need to unwrap Result like in Rust - Python doesn't have Result type
+            # Result bytes contain pickled return value
             payload = SuspensionPayload(
                 success=True,
                 data=result_bytes,
@@ -119,12 +88,11 @@ async def complete_child_flow(
             return
 
     else:
-        # Error case - use the error_msg which contains formatted error
-        # Format: "type_name: message"
+        # Error case - format: "type_name: message"
         error_msg = error_msg or "Unknown error"
         error_bytes = pickle.dumps(error_msg)
 
-        # Read child's step 0 retryability flag
+        # Read child's retryability flag from invocation
         is_retryable = None
         try:
             invocation = await storage.get_invocation(flow_id, 0)
@@ -135,17 +103,14 @@ async def complete_child_flow(
 
         payload = SuspensionPayload(success=False, data=error_bytes, is_retryable=is_retryable)
 
-    # Serialize signal payload
-    # From Rust lines 117-127
+    # Serialize signal payload for storage
     try:
         signal_bytes = pickle.dumps(payload)
     except Exception as e:
         logger.error(f"Failed to serialize signal payload for parent {parent_id}: {e}")
         return
 
-    # Find parent's waiting step
-    # From Rust lines 128-148
-    # Now using get_invocations_for_flow() that we implemented
+    # Find parent's waiting step by matching signal token
     waiting_step = None
     waiting_step_num = None
 
@@ -168,8 +133,7 @@ async def complete_child_flow(
         logger.error(f"Failed to get invocations for parent flow {parent_id}: {e}")
         return
 
-    # CRITICAL: Store suspension result - must succeed for parent to resume
-    # From Rust lines 152-166
+    # Store suspension result - required for parent flow resumption
     try:
         await storage.store_suspension_result(
             parent_id, waiting_step_num, signal_token, signal_bytes
@@ -180,9 +144,7 @@ async def complete_child_flow(
         )
         return
 
-    # Resume parent flow
-    # From Rust lines 168-191
-    # Now using resume_flow() that we implemented
+    # Resume parent flow execution
     try:
         resumed = await storage.resume_flow(parent_id)
 

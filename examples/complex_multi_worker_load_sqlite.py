@@ -21,18 +21,17 @@ This example proves:
 """
 
 import asyncio
-from dataclasses import dataclass
-from typing import Dict
 import threading
+from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import RetryPolicy
 from pyergon.storage.sqlite import SqliteExecutionLog
-
 
 # =============================================================================
 # GLOBAL METRICS (The Source of Truth)
 # =============================================================================
+
 
 class GlobalMetrics:
     """
@@ -43,6 +42,7 @@ class GlobalMetrics:
     In Python, we use a Lock to protect increment operations.
     This ensures accurate counts even with multiple workers.
     """
+
     def __init__(self):
         self._lock = threading.Lock()
         self.step_validate = 0
@@ -54,7 +54,7 @@ class GlobalMetrics:
         self.completed_flows = 0
 
         # Per-order attempt tracking (to simulate transient failures)
-        self.order_attempts: Dict[str, int] = {}
+        self.order_attempts: dict[str, int] = {}
 
         # Completion notification
         self.completion_event = asyncio.Event()
@@ -110,9 +110,11 @@ METRICS = GlobalMetrics()
 # DOMAIN LOGIC
 # =============================================================================
 
+
 @dataclass
 class ShippingLabel:
     """Shipping label data returned by child flow."""
+
     tracking: str
 
 
@@ -131,6 +133,7 @@ class OrderFlow:
     - Step execution tracking
     - Retry policy via decorator (matches Rust #[flow(retry = ...)])
     """
+
     id: int
     order_ref: str
 
@@ -182,12 +185,11 @@ class OrderFlow:
         METRICS.increment_notify()
 
     # MAIN FLOW
-    @flow(retry_policy=RetryPolicy(
-        max_attempts=3,
-        initial_delay_ms=100,
-        backoff_multiplier=2.0,
-        max_delay_ms=1000
-    ))
+    @flow(
+        retry_policy=RetryPolicy(
+            max_attempts=3, initial_delay_ms=100, backoff_multiplier=2.0, max_delay_ms=1000
+        )
+    )
     async def run_order(self) -> None:
         """
         Main order processing flow.
@@ -237,6 +239,7 @@ class LabelFlow:
 
     This is invoked by OrderFlow as a child flow.
     """
+
     parent_id: int
 
     @flow
@@ -257,6 +260,7 @@ class LabelFlow:
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
+
 
 async def main():
     """
@@ -307,7 +311,7 @@ async def main():
             storage=storage,
             worker_id=f"worker-{i}",
             enable_timers=False,
-            poll_interval=0.05  # 50ms aggressive polling (like Rust line 203)
+            poll_interval=0.05,  # 50ms aggressive polling (like Rust line 203)
         )
 
         await worker.register(OrderFlow)
@@ -325,7 +329,7 @@ async def main():
     # **Rust Reference**: lines 216-218
     try:
         await asyncio.wait_for(METRICS.completion_event.wait(), timeout=30.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("WARNING: Timeout waiting for completions")
 
     # Shutdown workers
@@ -371,12 +375,14 @@ async def main():
 
     # Final verdict
     # **Rust Reference**: lines 276-286
-    if (actual_validate == 40 and
-        actual_fraud == 30 and
-        actual_inventory == 40 and
-        actual_payment == 30 and
-        actual_label == 30 and
-        actual_notify == 30):
+    if (
+        actual_validate == 40
+        and actual_fraud == 30
+        and actual_inventory == 40
+        and actual_payment == 30
+        and actual_label == 30
+        and actual_notify == 30
+    ):
         print("SUCCESS: SYSTEM IS DETERMINISTIC UNDER LOAD")
         await storage.close()
         return 0

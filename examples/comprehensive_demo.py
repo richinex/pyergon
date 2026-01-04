@@ -38,17 +38,16 @@ import asyncio
 import hashlib
 import uuid
 from dataclasses import dataclass
-from typing import List
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import RetryPolicy, TaskStatus
-from pyergon.storage.sqlite import SqliteExecutionLog
 from pyergon.executor.timer import schedule_timer_named
-
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 # ============================================================================
 # CHILD FLOWS: Invokable flows that suspend parent until completion
 # ============================================================================
+
 
 @dataclass
 @flow_type(invokable=str)
@@ -63,6 +62,7 @@ class PaymentFlow:
     - Invokable by parent flow
     - Returns payment ID (str)
     """
+
     order_id: str
     amount: float
 
@@ -114,6 +114,7 @@ class ShippingFlow:
     - Invokable by parent flow
     - Returns tracking ID (str)
     """
+
     order_id: str
     address: str
 
@@ -149,9 +150,11 @@ class ShippingFlow:
 # MAIN FLOW: DAG, child invocations, event-driven completion
 # ============================================================================
 
+
 @dataclass
 class ValidationResult:
     """Aggregated validation results."""
+
     customer_valid: bool
     inventory_available: bool
     fraud_passed: bool
@@ -160,6 +163,7 @@ class ValidationResult:
 @dataclass
 class OrderReceipt:
     """Final order receipt."""
+
     order_id: str
     payment_id: str
     tracking_id: str
@@ -179,6 +183,7 @@ class OrderFlow:
     - Child flow invocations (payment, shipping)
     - Timer-based fraud check
     """
+
     order_id: str
     customer_id: str
     amount: float
@@ -199,19 +204,13 @@ class OrderFlow:
 
         # Invoke payment child flow
         print("  [Order] Invoking payment child flow...")
-        payment_pending = self.invoke(PaymentFlow(
-            order_id=self.order_id,
-            amount=self.amount
-        ))
+        payment_pending = self.invoke(PaymentFlow(order_id=self.order_id, amount=self.amount))
         payment_id = await payment_pending.result()
         print(f"  [Order] Payment completed: {payment_id}")
 
         # Invoke shipping child flow
         print("  [Order] Invoking shipping child flow...")
-        shipping_pending = self.invoke(ShippingFlow(
-            order_id=self.order_id,
-            address=self.address
-        ))
+        shipping_pending = self.invoke(ShippingFlow(order_id=self.order_id, address=self.address))
         tracking_id = await shipping_pending.result()
         print(f"  [Order] Shipping arranged: {tracking_id}")
 
@@ -219,7 +218,7 @@ class OrderFlow:
             order_id=self.order_id,
             payment_id=payment_id,
             tracking_id=tracking_id,
-            status="CONFIRMED"
+            status="CONFIRMED",
         )
 
         print(f"[Order {self.order_id}] Complete! Receipt: {receipt}")
@@ -238,10 +237,7 @@ class OrderFlow:
         from pyergon.executor.dag_runtime import dag
 
         # Execute DAG with parallel validation steps
-        return await dag(
-            self,
-            final_step="aggregate_validations"
-        )
+        return await dag(self, final_step="aggregate_validations")
 
     @step
     async def validate_customer(self) -> bool:
@@ -288,16 +284,13 @@ class OrderFlow:
     @step(
         depends_on=["validate_customer", "check_inventory", "check_fraud"],
         inputs={
-            'customer': 'validate_customer',
-            'inventory': 'check_inventory',
-            'fraud': 'check_fraud'
-        }
+            "customer": "validate_customer",
+            "inventory": "check_inventory",
+            "fraud": "check_fraud",
+        },
     )
     async def aggregate_validations(
-        self,
-        customer: bool,
-        inventory: bool,
-        fraud: bool
+        self, customer: bool, inventory: bool, fraud: bool
     ) -> ValidationResult:
         """
         Aggregate parallel validation results.
@@ -312,15 +305,14 @@ class OrderFlow:
             raise Exception("ValidationFailed")
 
         return ValidationResult(
-            customer_valid=customer,
-            inventory_available=inventory,
-            fraud_passed=fraud
+            customer_valid=customer, inventory_available=inventory, fraud_passed=fraud
         )
 
 
 # ============================================================================
 # MAIN
 # ============================================================================
+
 
 async def main():
     """
@@ -344,7 +336,7 @@ async def main():
             worker_id=f"worker-{i}",
             enable_timers=True,
             poll_interval=0.1,
-            timer_interval=0.05
+            timer_interval=0.05,
         )
 
         # Register all flow types
@@ -362,20 +354,14 @@ async def main():
     # Schedule orders
     orders = [
         OrderFlow(
-            order_id="ORDER-001",
-            customer_id="CUST-123",
-            amount=99.99,
-            address="123 Main St"
+            order_id="ORDER-001", customer_id="CUST-123", amount=99.99, address="123 Main St"
         ),
         OrderFlow(
-            order_id="ORDER-002",
-            customer_id="CUST-456",
-            amount=149.50,
-            address="456 Oak Ave"
+            order_id="ORDER-002", customer_id="CUST-456", amount=149.50, address="456 Oak Ave"
         ),
     ]
 
-    task_ids: List[uuid.UUID] = []
+    task_ids: list[uuid.UUID] = []
     for order in orders:
         task_id = await scheduler.schedule(order)
         task_ids.append(task_id)
@@ -421,6 +407,7 @@ async def main():
             inv = await storage.get_invocation(task.flow_id, 0)
             if inv and inv.return_value:
                 import pickle
+
                 try:
                     result = pickle.loads(inv.return_value)
                     if isinstance(result, OrderReceipt):
@@ -433,7 +420,7 @@ async def main():
     # Shutdown workers
     for i, handle in enumerate(worker_handles):
         await handle.shutdown()
-        print(f"[Cleanup] Worker {i+1} stopped")
+        print(f"[Cleanup] Worker {i + 1} stopped")
 
     await storage.close()
     print("[Cleanup] Storage closed")

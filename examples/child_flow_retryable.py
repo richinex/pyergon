@@ -35,8 +35,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
-from pyergon.core import RetryPolicy, RetryableError, TaskStatus
+from pyergon import Scheduler, Worker, flow, flow_type, step
+from pyergon.core import RetryableError, RetryPolicy, TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -50,8 +50,10 @@ PARENT_EXECUTIONS = 0
 # Custom Non-Retryable Error
 # ============================================================================
 
+
 class PaymentError(RetryableError):
     """Base class for payment errors."""
+
     pass
 
 
@@ -70,6 +72,7 @@ class InvalidCardError(PaymentError):
 # Child Flow - Raises Non-Retryable Error
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class PaymentChildFlow:
@@ -78,6 +81,7 @@ class PaymentChildFlow:
 
     Expected: Execute ONCE, fail with is_retryable=False
     """
+
     card_number: str
 
     @step
@@ -100,6 +104,7 @@ class PaymentChildFlow:
 # Parent Flow - Invokes Child
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class OrderParentFlow:
@@ -111,6 +116,7 @@ class OrderParentFlow:
 
     Behavior: Parent executes twice (initial suspend + resume), with zero retries.
     """
+
     order_id: str
     card_number: str
 
@@ -136,6 +142,7 @@ class OrderParentFlow:
 # Main Execution
 # ============================================================================
 
+
 async def main():
     """
     Run test and verify ChildFlowError preserves retryability.
@@ -150,10 +157,7 @@ async def main():
     scheduler = Scheduler(storage).with_version("v1.0")
 
     # Schedule parent flow
-    order = OrderParentFlow(
-        order_id="ORD-001",
-        card_number="**** **** **** 9999"
-    )
+    order = OrderParentFlow(order_id="ORD-001", card_number="**** **** **** 9999")
     task_id = await scheduler.schedule(order)
 
     # Start worker
@@ -165,11 +169,8 @@ async def main():
     # Wait for completion
     status_notify = storage.status_notify()
     try:
-        await asyncio.wait_for(
-            _wait_for_completion(storage, task_id, status_notify),
-            timeout=10.0
-        )
-    except asyncio.TimeoutError:
+        await asyncio.wait_for(_wait_for_completion(storage, task_id, status_notify), timeout=10.0)
+    except TimeoutError:
         print("\nWARNING: Timeout waiting for completion")
 
     # Get final status
@@ -177,20 +178,26 @@ async def main():
 
     # Verify results
     is_correct = (
-        PARENT_EXECUTIONS == 2 and
-        scheduled and
-        scheduled.retry_count == 0 and
-        scheduled.status == TaskStatus.FAILED
+        PARENT_EXECUTIONS == 2
+        and scheduled
+        and scheduled.retry_count == 0
+        and scheduled.status == TaskStatus.FAILED
     )
 
-    print(f"{task_id}: {scheduled.status.name if scheduled else 'UNKNOWN'} (retries: {scheduled.retry_count if scheduled else 'N/A'})")
+    status_name = scheduled.status.name if scheduled else "UNKNOWN"
+    retry_count = scheduled.retry_count if scheduled else "N/A"
+    print(f"{task_id}: {status_name} (retries: {retry_count})")
     print(f"  Child executions: {CHILD_EXECUTIONS}")
     print(f"  Parent executions: {PARENT_EXECUTIONS}")
     if scheduled and scheduled.error_message:
         print(f"  Error: {scheduled.error_message}")
 
     # Assert correctness
-    assert is_correct, f"Test failed: parent_executions={PARENT_EXECUTIONS} (expected 2), retry_count={scheduled.retry_count if scheduled else 'N/A'} (expected 0)"
+    retry_count_val = scheduled.retry_count if scheduled else "N/A"
+    assert is_correct, (
+        f"Test failed: parent_executions={PARENT_EXECUTIONS} (expected 2), "
+        f"retry_count={retry_count_val} (expected 0)"
+    )
 
     await worker_handle.shutdown()
     await storage.close()

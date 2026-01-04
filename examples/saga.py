@@ -12,7 +12,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Worker, Scheduler, InMemoryExecutionLog
+from pyergon import InMemoryExecutionLog, Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
 
 # Suppress worker logging for clean output
@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.CRITICAL)
 # =============================================================================
 # DOMAIN LOGIC
 # =============================================================================
+
 
 class SagaError(Exception):
     """Base class for saga errors with retry protocol."""
@@ -36,6 +37,7 @@ class SagaError(Exception):
         3. Retrying would re-run compensation incorrectly
         """
         return False
+
 
 @dataclass
 @flow_type
@@ -54,6 +56,7 @@ class HolidaySaga:
     - destination="Paris" -> Success (all bookings succeed)
     - destination="Atlantis" -> Failure at car booking (triggers compensation)
     """
+
     destination: str  # "Paris" = Success, "Atlantis" = Car Failure
 
     # --- FORWARD STEPS ---
@@ -169,6 +172,7 @@ class HolidaySaga:
 # MAIN
 # =============================================================================
 
+
 async def _wait_for_completion(storage, task_ids, status_notify):
     """Wait for all sagas to complete using event-driven notifications."""
     while True:
@@ -231,11 +235,8 @@ async def main():
     task_ids = [task_id for _, task_id in scenarios]
 
     try:
-        await asyncio.wait_for(
-            _wait_for_completion(storage, task_ids, status_notify),
-            timeout=10.0
-        )
-    except asyncio.TimeoutError:
+        await asyncio.wait_for(_wait_for_completion(storage, task_ids, status_notify), timeout=10.0)
+    except TimeoutError:
         print("[Warning] Timeout waiting for sagas to complete")
 
     # Print results

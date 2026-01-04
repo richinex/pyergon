@@ -35,11 +35,10 @@ import hashlib
 import logging
 import pickle
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import RetryPolicy, TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
 
@@ -50,6 +49,7 @@ logging.basicConfig(level=logging.CRITICAL)
 # COMPUTATION CORE
 # =============================================================================
 
+
 def compute_svd(matrix: np.ndarray) -> np.ndarray:
     """
     Singular Value Decomposition - O(n³) complexity.
@@ -57,7 +57,7 @@ def compute_svd(matrix: np.ndarray) -> np.ndarray:
     Ergon Advantage: Cached via @step decorator.
     Celery Limitation: Recomputed on every retry.
     """
-    U, S, Vt = np.linalg.svd(matrix, full_matrices=False)
+    U, S, Vt = np.linalg.svd(matrix, full_matrices=False)  # noqa: N806
     return S
 
 
@@ -94,12 +94,14 @@ def simulate_transient_failure():
 # CHILD FLOW: Matrix Batch Processing
 # =============================================================================
 
+
 @dataclass
 class MatrixResult:
     """Analysis result from single batch."""
+
     batch_id: int
-    singular_values: List[float]
-    eigenvalues: List[float]
+    singular_values: list[float]
+    eigenvalues: list[float]
 
 
 @dataclass
@@ -111,6 +113,7 @@ class MatrixBatchFlow:
     Ergon Advantage: Parent-child flow invocation with result passing.
     Celery Limitation: Manual coordination via callbacks.
     """
+
     batch_id: int
     matrix_size: int
 
@@ -153,13 +156,14 @@ class MatrixBatchFlow:
         return MatrixResult(
             batch_id=self.batch_id,
             singular_values=singular_values.tolist(),
-            eigenvalues=eigenvalues.tolist()
+            eigenvalues=eigenvalues.tolist(),
         )
 
 
 # =============================================================================
 # PARENT FLOW: Pipeline Orchestration
 # =============================================================================
+
 
 @dataclass
 @flow_type
@@ -173,6 +177,7 @@ class ScientificPipeline:
     3. Retry policies via decorator
     4. Parent-child invocation with result passing
     """
+
     experiment_id: str
     num_batches: int
     matrix_size: int
@@ -187,11 +192,11 @@ class ScientificPipeline:
         return {
             "experiment_id": self.experiment_id,
             "batches": self.num_batches,
-            "matrix_size": self.matrix_size
+            "matrix_size": self.matrix_size,
         }
 
     @step
-    async def process_batches(self, config: dict) -> List[MatrixResult]:
+    async def process_batches(self, config: dict) -> list[MatrixResult]:
         """
         Process batches via child flow invocation.
 
@@ -201,17 +206,14 @@ class ScientificPipeline:
         """
         results = []
         for batch_id in range(self.num_batches):
-            child_flow = MatrixBatchFlow(
-                batch_id=batch_id,
-                matrix_size=self.matrix_size
-            )
+            child_flow = MatrixBatchFlow(batch_id=batch_id, matrix_size=self.matrix_size)
             result = await self.invoke(child_flow).result()
             results.append(result)
 
         return results
 
     @step
-    async def aggregate_results(self, results: List[MatrixResult]) -> dict:
+    async def aggregate_results(self, results: list[MatrixResult]) -> dict:
         """
         Aggregate analysis results.
 
@@ -231,15 +233,14 @@ class ScientificPipeline:
             "max_singular_value": float(np.max(all_sv)),
             "mean_eigenvalue": float(np.mean(all_ev)),
             "max_eigenvalue": float(np.max(all_ev)),
-            "result_hash": hashlib.md5(pickle.dumps(all_sv)).hexdigest()[:8]
+            "result_hash": hashlib.md5(pickle.dumps(all_sv)).hexdigest()[:8],
         }
 
-    @flow(retry_policy=RetryPolicy(
-        max_attempts=5,
-        initial_delay_ms=500,
-        backoff_multiplier=2.0,
-        max_delay_ms=5000
-    ))
+    @flow(
+        retry_policy=RetryPolicy(
+            max_attempts=5, initial_delay_ms=500, backoff_multiplier=2.0, max_delay_ms=5000
+        )
+    )
     async def run(self) -> dict:
         """
         Main pipeline orchestration.
@@ -257,6 +258,7 @@ class ScientificPipeline:
 # MAIN EXECUTION
 # =============================================================================
 
+
 async def main():
     storage = SqliteExecutionLog("data/numpy_pipeline.db")
     await storage.connect()
@@ -269,20 +271,13 @@ async def main():
 
     scheduler = Scheduler(storage).with_version("v1.0")
     task_id = await scheduler.schedule(
-        ScientificPipeline(
-            experiment_id="EXP-2024-001",
-            num_batches=3,
-            matrix_size=50
-        )
+        ScientificPipeline(experiment_id="EXP-2024-001", num_batches=3, matrix_size=50)
     )
 
     status_notify = storage.status_notify()
     try:
-        await asyncio.wait_for(
-            _wait_for_completion(storage, task_id, status_notify),
-            timeout=30.0
-        )
-    except asyncio.TimeoutError:
+        await asyncio.wait_for(_wait_for_completion(storage, task_id, status_notify), timeout=30.0)
+    except TimeoutError:
         print("[Warning] Timeout waiting for completion")
 
     task = await storage.get_scheduled_flow(task_id)
@@ -293,6 +288,7 @@ async def main():
         inv = await storage.get_invocation(task.flow_id, 0)
         if inv and inv.return_value:
             import pickle
+
             try:
                 result = pickle.loads(inv.return_value)
                 if isinstance(result, dict):

@@ -1,20 +1,13 @@
-"""
-Flow execution outcomes and suspension reasons.
+"""Flow execution outcomes and suspension reasons.
 
-This module defines the FlowOutcome state machine for flow execution results.
+Defines the FlowOutcome state machine for flow execution results.
+A flow can either complete (successfully or with error) or suspend
+(waiting for timer or signal).
 
-**Rust Reference**:
-`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/error.rs` lines 69-92
-
-**Python Documentation**:
-- Dataclasses: https://docs.python.org/3/library/dataclasses.html
-- Generic types: https://docs.python.org/3/library/typing.html#typing.Generic
-- Union types: https://docs.python.org/3/library/typing.html#typing.Union
-
-**Design Pattern**: State Machine using Union types (BEST_PRACTICES.md section on state machines)
-
-From Dave Cheney's principle: "If your function can suspend, you must tell the caller."
-FlowOutcome makes suspension explicit instead of hiding it in exceptions or timeouts.
+Design: State Machine with Union Types
+FlowOutcome makes suspension explicit in the type system instead
+of hiding it in exceptions or timeouts. Callers must handle both
+completion and suspension cases.
 
 Example:
     ```python
@@ -50,44 +43,35 @@ R = TypeVar("R")
 
 
 class _FlowControl(BaseException):
-    """
-    Base class for flow control signals.
+    """Base class for flow control signals.
 
-    Like Python's StopIteration and GeneratorExit, these are control flow
-    mechanisms, not errors. They inherit from BaseException (not Exception)
-    to ensure they're not accidentally caught by generic exception handlers.
+    Like StopIteration and GeneratorExit, these are control flow
+    mechanisms, not errors. Inheriting from BaseException (not Exception)
+    prevents accidental catching by generic exception handlers.
 
-    **Design Rationale**:
-    - Inheriting from BaseException prevents accidental catching by `except Exception:`
-    - Makes it explicit that these are control flow, not error conditions
-    - Follows Python's precedent for control flow exceptions
-
-    **Reference**: PEP 352 - Required Superclass for Exceptions
-    https://www.python.org/dev/peps/pep-0352/
+    Design: Control Flow Exceptions
+    Follows Python's precedent for control flow exceptions that
+    should not be caught by `except Exception:` handlers.
     """
 
     pass
 
 
 class _SuspendExecution(_FlowControl):  # noqa: N818
-    """
-    Signal that flow execution should suspend (not an error).
+    """Signal that flow execution should suspend.
 
-    **Python-specific pattern**: In Rust, futures can return Poll::Pending
-    without completing. In Python, async functions must complete or raise.
+    Raised by schedule_timer(), await_external_signal(), and
+    pending_child.result() to indicate suspension. The Executor
+    catches this and checks ctx.take_suspend_reason() for details.
 
-    This signal is raised by schedule_timer(), await_external_signal(), and
-    pending_child.result() to indicate the flow should suspend. The Executor
-    catches this and checks ctx.take_suspend_reason() for suspension details.
+    Design: Python Suspension Mechanism
+    In Python, async functions must complete or raise (unlike futures
+    that can return pending). This exception provides control flow
+    for suspension without being an error.
 
-    **Not an Error**: This is control flow, like StopIteration. The noqa comment
-    suppresses N818 (exceptions should end with Error) because this is intentionally
-    not an error - it's a control flow signal.
-
-    **Visibility**: Internal mechanism, never visible to user code - caught by
-    the Executor before returning to the worker.
-
-    **Rust Equivalent**: Poll::Pending in async fn
+    Note: Internal mechanism caught by Executor, never visible to users.
+    The noqa comment suppresses N818 (exceptions should end with Error)
+    because this is intentionally a control flow signal, not an error.
     """
 
     pass
@@ -95,22 +79,16 @@ class _SuspendExecution(_FlowControl):  # noqa: N818
 
 @dataclass(frozen=True)
 class SuspendReason:
-    """
-    Reason why a flow suspended execution.
+    """Reason why a flow suspended execution.
 
-    **Rust Reference**: `src/executor/error.rs` lines 69-80
-
-    A flow suspends when it needs to wait for an external event:
+    A flow suspends when waiting for an external event:
     - Timer: Waiting for a duration to elapse
     - Signal: Waiting for external signal (including child flow completion)
 
     Attributes:
         flow_id: UUID of the suspended flow
         step: Step number where suspension occurred
-        signal_name: Name of signal if waiting for signal, None if waiting for timer
-
-    **Python Best Practice**: Using frozen dataclass for immutability
-    Reference: https://docs.python.org/3/library/dataclasses.html#frozen-instances
+        signal_name: Name of signal if waiting for signal, None for timer
     """
 
     flow_id: UUID
@@ -118,42 +96,23 @@ class SuspendReason:
     signal_name: str | None = None
 
     def is_timer(self) -> bool:
-        """
-        Check if this is a timer suspension.
+        """Check if this is a timer suspension.
 
         Returns:
             True if waiting for timer, False if waiting for signal
-
-        Example:
-            ```python
-            if reason.is_timer():
-                print(f"Waiting for timer at step {reason.step}")
-            ```
         """
         return self.signal_name is None
 
     def is_signal(self) -> bool:
-        """
-        Check if this is a signal suspension.
+        """Check if this is a signal suspension.
 
         Returns:
             True if waiting for signal, False if waiting for timer
-
-        Example:
-            ```python
-            if reason.is_signal():
-                print(f"Waiting for signal '{reason.signal_name}'")
-            ```
         """
         return self.signal_name is not None
 
     def __str__(self) -> str:
-        """
-        Human-readable string representation.
-
-        **Python Best Practice**: Implement __str__ for user-facing output
-        Reference: https://docs.python.org/3/reference/datamodel.html#object.__str__
-        """
+        """Return human-readable string representation."""
         if self.is_timer():
             return f"Timer(flow_id={self.flow_id}, step={self.step})"
         else:
@@ -165,19 +124,13 @@ class SuspendReason:
 
 @dataclass(frozen=True)
 class Completed(Generic[R]):
-    """
-    Flow completed execution (success or failure).
+    """Flow completed execution (success or failure).
 
-    **Rust Reference**: `FlowOutcome::Completed(R)` in `src/executor/error.rs` line 89
-
-    The result can be a success value or an exception. The caller must check
-    whether execution succeeded or failed by inspecting the result.
+    The result can be a success value or an exception. Callers must
+    check whether execution succeeded or failed by inspecting the result.
 
     Attributes:
-        result: The flow's return value (success) or raised exception (failure)
-
-    **Python Best Practice**: Using Generic[R] for type parameterization
-    Reference: https://docs.python.org/3/library/typing.html#typing.Generic
+        result: Flow return value (success) or raised exception (failure)
 
     Example:
         ```python
@@ -190,34 +143,18 @@ class Completed(Generic[R]):
     result: R
 
     def is_success(self) -> bool:
-        """
-        Check if flow completed successfully.
+        """Check if flow completed successfully.
 
         Returns:
-            True if result is not an exception, False if result is an exception
-
-        Example:
-            ```python
-            if outcome.is_success():
-                print(f"Success: {outcome.result}")
-            else:
-                print(f"Failed: {outcome.result}")
-            ```
+            True if result is not an exception, False otherwise
         """
         return not isinstance(self.result, BaseException)
 
     def is_failure(self) -> bool:
-        """
-        Check if flow completed with failure.
+        """Check if flow completed with failure.
 
         Returns:
             True if result is an exception, False otherwise
-
-        Example:
-            ```python
-            if outcome.is_failure():
-                raise outcome.result
-            ```
         """
         return isinstance(self.result, BaseException)
 
@@ -231,14 +168,10 @@ class Completed(Generic[R]):
 
 @dataclass(frozen=True)
 class Suspended:
-    """
-    Flow suspended, waiting for external event.
+    """Flow suspended, waiting for external event.
 
-    **Rust Reference**: `FlowOutcome::Suspended(SuspendReason)` in `src/executor/error.rs` line 91
-
-    The flow has paused execution and is waiting for:
-    - A timer to fire
-    - An external signal to arrive
+    The flow has paused execution and is waiting for a timer
+    to fire or an external signal to arrive.
 
     Attributes:
         reason: Why the flow suspended (timer or signal)
@@ -261,15 +194,7 @@ class Suspended:
         return f"Suspended({self.reason})"
 
 
-# =============================================================================
-# FLOW OUTCOME UNION TYPE
-# =============================================================================
-
 # FlowOutcome is a Union type representing the result of flow execution.
-# This is equivalent to Rust's enum FlowOutcome<R>.
-#
-# Python Best Practice: Union types for state machines
-# Reference: BEST_PRACTICES.md section "State Machines with Union Types"
 #
 # Pattern matching (Python 3.10+):
 #     match outcome:
@@ -280,10 +205,8 @@ class Suspended:
 #
 # Type narrowing:
 #     if isinstance(outcome, Completed):
-#         # outcome.result is available here
 #         print(outcome.result)
 #     elif isinstance(outcome, Suspended):
-#         # outcome.reason is available here
 #         print(outcome.reason)
 #
 FlowOutcome = Completed[R] | Suspended
@@ -295,11 +218,7 @@ FlowOutcome = Completed[R] | Suspended
 
 
 def is_completed(outcome: FlowOutcome[R]) -> bool:
-    """
-    Type guard to check if outcome is Completed.
-
-    **Python Best Practice**: Type guards for Union type narrowing
-    Reference: https://docs.python.org/3/library/typing.html#typing.TypeGuard
+    """Type guard to check if outcome is Completed.
 
     Args:
         outcome: Flow execution outcome
@@ -310,7 +229,6 @@ def is_completed(outcome: FlowOutcome[R]) -> bool:
     Example:
         ```python
         if is_completed(outcome):
-            # Type checker knows outcome is Completed[R] here
             print(outcome.result)
         ```
     """
@@ -318,8 +236,7 @@ def is_completed(outcome: FlowOutcome[R]) -> bool:
 
 
 def is_suspended(outcome: FlowOutcome[R]) -> bool:
-    """
-    Type guard to check if outcome is Suspended.
+    """Type guard to check if outcome is Suspended.
 
     Args:
         outcome: Flow execution outcome
@@ -330,7 +247,6 @@ def is_suspended(outcome: FlowOutcome[R]) -> bool:
     Example:
         ```python
         if is_suspended(outcome):
-            # Type checker knows outcome is Suspended here
             print(outcome.reason)
         ```
     """

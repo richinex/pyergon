@@ -1,17 +1,11 @@
-"""
-Data models for PyErgon.
+"""Core data models for workflow execution.
 
-This module contains all data types and models:
-- Invocation: Represents a single step execution
-- InvocationStatus: Step execution state
-- TaskStatus: Queue task status
-- ScheduledFlow: Represents a queued flow task
-- RetryPolicy: Retry configuration for steps
-- RetryableError: Base class for errors with retry control
-- TimerInfo: Information about an expired timer
+Defines types for workflow state tracking, execution scheduling,
+and retry behavior.
 
-These types have no dependencies on core or storage modules,
-preventing circular dependencies.
+Design: Dependency-Free Models
+These types have no dependencies on core or storage modules to
+prevent circular imports and enable clean layering.
 """
 
 from pyergon.models.invocation import Invocation

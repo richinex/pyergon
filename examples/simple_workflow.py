@@ -2,11 +2,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
+
 
 @dataclass
 @flow_type

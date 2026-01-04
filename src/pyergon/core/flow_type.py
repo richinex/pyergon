@@ -1,22 +1,11 @@
-"""
-FlowType protocol for stable type identification.
+"""Protocol for stable flow type identification across serialization.
 
-This module provides FlowType protocol which ensures flows have stable
-type identifiers that don't change across Python versions or refactorings.
+Provides FlowType protocol ensuring flows have stable type identifiers
+that survive Python version changes, refactorings, and serialization.
 
-RUST COMPLIANCE: Matches Rust ergon src/core/flow_type.rs
-
-From Rust:
-    pub trait FlowType {
-        fn type_id() -> &'static str;
-    }
-
-Design: Protocol-based (PEP 544) for structural typing
-No inheritance required - any class with type_id() method qualifies.
-
-From Dave Cheney:
-"Let functions define the behavior they require" - Worker only needs
-type_id() method, not full flow interface. Protocol enables this.
+Design: Structural Typing (PEP 544)
+    No inheritance required - any class with type_id() method qualifies.
+    Workers only need type_id() for routing, not the full flow interface.
 """
 
 from typing import Protocol, runtime_checkable
@@ -24,78 +13,69 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class FlowType(Protocol):
-    """
-    Protocol for flows with stable type identification.
+    """Protocol for flows with stable, version-independent type identification.
 
-    FlowType ensures flows can be identified by a stable string ID
-    that doesn't change across Python versions, unlike __qualname__ or
-    __module__ which can vary.
+    Provides explicit type IDs that remain stable across Python versions,
+    refactorings, and module reorganizations.
 
-    This is CRITICAL for distributed workers:
-    - Worker registers handler for "MyFlow" type ID
-    - Scheduler serializes flow with "MyFlow" type ID
-    - Worker deserializes and routes to correct handler
-
-    From Rust ergon src/core/flow_type.rs:
-        pub trait FlowType {
-            fn type_id() -> &'static str;
-        }
+    Critical for distributed execution:
+        - Worker registers handler for "OrderProcessor" type ID
+        - Scheduler serializes flow with "OrderProcessor" type ID
+        - Worker deserializes and routes to correct handler
 
     Why NOT use type(flow).__name__:
-        1. Can change if class is renamed or moved to another module
-        2. Not stable across different Python versions
-        3. Generic types have complex names (Flow[T] not Flow)
+        - Changes if class is renamed or moved to another module
+        - Not stable across different Python versions
+        - Generic types have complex names (MyGeneric[T] not MyGeneric)
 
     Why use explicit type_id():
-        1. Stable - developer controls the ID
-        2. Clear - not tied to Python internals
-        3. Flexible - can have custom IDs (#[flow_type(id = "custom")])
+        - Stable: developer controls the ID
+        - Clear: not tied to Python internals
+        - Flexible: can customize via decorator parameter
 
-    Usage:
-        @flow
-        class MyFlow:
+    Example:
+        ```python
+        from pyergon.decorators import flow_type
+
+        @flow_type
+        class OrderProcessor:
             @staticmethod
             def type_id() -> str:
-                return "MyFlow"
+                return "OrderProcessor"
 
-        # Check if class implements protocol
-        assert isinstance(MyFlow, FlowType)
+        # Check protocol implementation
+        assert isinstance(OrderProcessor, FlowType)
 
         # Get type ID
-        flow_type_id = MyFlow.type_id()  # "MyFlow"
+        type_id = OrderProcessor.type_id()  # "OrderProcessor"
+        ```
     """
 
     @staticmethod
     def type_id() -> str:
-        """
-        Return stable type identifier for this flow.
+        """Return stable type identifier for this flow.
 
-        This MUST return a consistent string across:
-        - Python versions (3.11, 3.12, etc.)
-        - Refactorings (moving classes, renaming)
-        - Serialization round-trips
-
-        Default: Class name (e.g., "MyFlow")
-        Custom: Specified via decorator parameter
+        Must return a consistent string across:
+            - Python versions (3.11, 3.12, etc.)
+            - Refactorings (moving classes, renaming modules)
+            - Serialization round-trips
 
         Returns:
-            Stable type identifier string
+            Stable type identifier (typically class name)
 
         Example:
+            ```python
             class OrderProcessor:
                 @staticmethod
                 def type_id() -> str:
                     return "OrderProcessor"
+            ```
         """
         ...
 
 
 def get_flow_type_id(flow: FlowType) -> str:
-    """
-    Get type ID from a flow instance or class.
-
-    From Rust:
-        T::type_id()
+    """Extract type ID from a flow instance or class.
 
     Args:
         flow: Flow instance or class implementing FlowType
@@ -106,12 +86,15 @@ def get_flow_type_id(flow: FlowType) -> str:
     Raises:
         TypeError: If flow doesn't implement FlowType protocol
 
-    Usage:
-        flow = MyFlow()
-        type_id = get_flow_type_id(flow)  # "MyFlow"
+    Example:
+        ```python
+        # From instance
+        flow = OrderProcessor()
+        type_id = get_flow_type_id(flow)  # "OrderProcessor"
 
-        # Or with class
-        type_id = get_flow_type_id(MyFlow)  # "MyFlow"
+        # From class
+        type_id = get_flow_type_id(OrderProcessor)  # "OrderProcessor"
+        ```
     """
     if isinstance(flow, type):
         # flow is a class

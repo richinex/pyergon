@@ -21,25 +21,26 @@ Run with:
 
 import asyncio
 from dataclasses import dataclass
-from typing import List
 
-from pyergon import flow, flow_type, step, Scheduler, Worker, InMemoryExecutionLog
+from pyergon import InMemoryExecutionLog, Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
-
 
 # ============================================================================
 # Data Structures
 # ============================================================================
 
+
 @dataclass
 class ValidationResult:
     """Result of order validation."""
+
     order_id: str
 
 
 @dataclass
 class PaymentResult:
     """Result of payment processing."""
+
     transaction_id: str
     status: str
 
@@ -47,6 +48,7 @@ class PaymentResult:
 @dataclass
 class InventoryResult:
     """Result of inventory reservation."""
+
     reservation_id: str
     status: str
 
@@ -54,6 +56,7 @@ class InventoryResult:
 @dataclass
 class OrderResult:
     """Final order processing result."""
+
     order_id: str
     status: str
     items_count: int
@@ -63,6 +66,7 @@ class OrderResult:
 # PARENT FLOW: Actually spawns child flows inline
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class OrderProcessor:
@@ -71,8 +75,9 @@ class OrderProcessor:
 
     **Rust Reference**: OrderProcessor in nested_flows_real.rs lines 16-113
     """
+
     order_id: str
-    items: List[str]
+    items: list[str]
     total_amount: float
 
     @flow
@@ -128,10 +133,7 @@ class OrderProcessor:
         print(f"  [Step] Spawning child payment flow for {validation.order_id}")
 
         # Create and execute child flow inline
-        child = PaymentFlow(
-            transaction_id=f"TXN-{self.order_id}",
-            amount=self.total_amount
-        )
+        child = PaymentFlow(transaction_id=f"TXN-{self.order_id}", amount=self.total_amount)
 
         # Execute child flow directly (it has its own steps)
         result = await child.process()
@@ -149,10 +151,7 @@ class OrderProcessor:
         print(f"  [Step] Spawning child inventory flow (payment: {payment.transaction_id})")
 
         # Create and execute child flow inline
-        child = InventoryFlow(
-            reservation_id=f"RES-{self.order_id}",
-            items=self.items
-        )
+        child = InventoryFlow(reservation_id=f"RES-{self.order_id}", items=self.items)
 
         result = await child.process()
 
@@ -169,16 +168,13 @@ class OrderProcessor:
         print(f"  [Step] Finalizing order (reservation: {inventory.reservation_id})")
         await asyncio.sleep(0.05)
 
-        return OrderResult(
-            order_id=self.order_id,
-            status="completed",
-            items_count=len(self.items)
-        )
+        return OrderResult(order_id=self.order_id, status="completed", items_count=len(self.items))
 
 
 # ============================================================================
 # CHILD FLOW: Payment processing
 # ============================================================================
+
 
 @dataclass
 @flow_type
@@ -190,6 +186,7 @@ class PaymentFlow:
 
     Executed inline by parent flow (not scheduled separately).
     """
+
     transaction_id: str
     amount: float
 
@@ -228,15 +225,13 @@ class PaymentFlow:
         print(f"      [Step] Capturing payment (auth: {auth_code})")
         await asyncio.sleep(0.03)
 
-        return PaymentResult(
-            transaction_id=self.transaction_id,
-            status="captured"
-        )
+        return PaymentResult(transaction_id=self.transaction_id, status="captured")
 
 
 # ============================================================================
 # CHILD FLOW: Inventory management
 # ============================================================================
+
 
 @dataclass
 @flow_type
@@ -248,8 +243,9 @@ class InventoryFlow:
 
     Executed inline by parent flow (not scheduled separately).
     """
+
     reservation_id: str
-    items: List[str]
+    items: list[str]
 
     async def process(self) -> InventoryResult:
         """
@@ -266,7 +262,7 @@ class InventoryFlow:
         return result
 
     @step
-    async def check_stock(self) -> List[str]:
+    async def check_stock(self) -> list[str]:
         """
         Check stock availability.
 
@@ -277,7 +273,7 @@ class InventoryFlow:
         return self.items.copy()
 
     @step
-    async def reserve(self, items: List[str]) -> InventoryResult:
+    async def reserve(self, items: list[str]) -> InventoryResult:
         """
         Reserve inventory items.
 
@@ -286,15 +282,13 @@ class InventoryFlow:
         print(f"      [Step] Reserving {len(items)} items")
         await asyncio.sleep(0.03)
 
-        return InventoryResult(
-            reservation_id=self.reservation_id,
-            status="reserved"
-        )
+        return InventoryResult(reservation_id=self.reservation_id, status="reserved")
 
 
 # ============================================================================
 # Main
 # ============================================================================
+
 
 async def main():
     """
@@ -307,11 +301,7 @@ async def main():
     scheduler = Scheduler(storage).with_version("v1.0")
 
     # Schedule parent flow only - it will spawn children inline
-    order = OrderProcessor(
-        order_id="ORD-001",
-        items=["Widget", "Gadget"],
-        total_amount=99.99
-    )
+    order = OrderProcessor(order_id="ORD-001", items=["Widget", "Gadget"], total_amount=99.99)
     task_id = await scheduler.schedule(order)
 
     # Worker only needs to handle the parent flow type

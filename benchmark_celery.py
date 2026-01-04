@@ -24,8 +24,9 @@ Usage:
     PYTHONPATH=src uv run python benchmark_celery.py
 """
 
-import time
 import sys
+import time
+
 from celery import Celery, group
 
 # ============================================================================
@@ -33,47 +34,52 @@ from celery import Celery, group
 # ============================================================================
 
 celery_app = Celery(
-    'benchmark',
-    broker='redis://localhost:6379/1',      # Redis DB 1 for Celery broker
-    backend='redis://localhost:6379/1',     # Redis DB 1 for results
+    "benchmark",
+    broker="redis://localhost:6379/1",  # Redis DB 1 for Celery broker
+    backend="redis://localhost:6379/1",  # Redis DB 1 for results
 )
 
 # Celery configuration following 2025 best practices
 celery_app.conf.update(
-    task_serializer='json',                 # JSON for fair comparison
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
+    task_serializer="json",  # JSON for fair comparison
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
     enable_utc=True,
-    task_track_started=True,                # Track task state
-    task_acks_late=True,                    # Acknowledge after task completes
-    worker_prefetch_multiplier=1,           # Fair task distribution (from docs)
+    task_track_started=True,  # Track task state
+    task_acks_late=True,  # Acknowledge after task completes
+    worker_prefetch_multiplier=1,  # Fair task distribution (from docs)
     broker_connection_retry_on_startup=True,
-    result_expires=3600,                    # Results expire after 1 hour
+    result_expires=3600,  # Results expire after 1 hour
 )
 
 # ============================================================================
 # Celery Tasks
 # ============================================================================
 
-@celery_app.task(name='benchmark.celery_step1')
+
+@celery_app.task(name="benchmark.celery_step1")
 def celery_step1():
     """Step 1: Return initial value."""
     return 1
 
-@celery_app.task(name='benchmark.celery_step2')
+
+@celery_app.task(name="benchmark.celery_step2")
 def celery_step2(value):
     """Step 2: Increment value."""
     return value + 1
 
-@celery_app.task(name='benchmark.celery_step3')
+
+@celery_app.task(name="benchmark.celery_step3")
 def celery_step3(value):
     """Step 3: Double value."""
     return value * 2
 
+
 # ============================================================================
 # Celery Benchmarks
 # ============================================================================
+
 
 def benchmark_celery_simple(count: int = 100) -> float:
     """
@@ -96,8 +102,9 @@ def benchmark_celery_simple(count: int = 100) -> float:
         r3.get()  # Wait for final result
     elapsed = time.time() - start
 
-    print(f"  {elapsed:.3f}s ({elapsed*10:.2f}ms per workflow)")
+    print(f"  {elapsed:.3f}s ({elapsed * 10:.2f}ms per workflow)")
     return elapsed
+
 
 def benchmark_celery_concurrent(worker_count: int = 3, flow_count: int = 100) -> float:
     """
@@ -126,8 +133,9 @@ def benchmark_celery_concurrent(worker_count: int = 3, flow_count: int = 100) ->
         result.get()
 
     elapsed = time.time() - start
-    print(f"  {elapsed:.3f}s ({elapsed*10:.2f}ms per workflow)")
+    print(f"  {elapsed:.3f}s ({elapsed * 10:.2f}ms per workflow)")
     return elapsed
+
 
 def benchmark_celery_parallel(count: int = 50) -> float:
     """
@@ -140,27 +148,32 @@ def benchmark_celery_parallel(count: int = 50) -> float:
     start = time.time()
     for _ in range(count):
         # Create a group of 3 parallel tasks
-        job = group([
-            celery_step1.s(),
-            celery_step1.s(),
-            celery_step1.s(),
-        ])
+        job = group(
+            [
+                celery_step1.s(),
+                celery_step1.s(),
+                celery_step1.s(),
+            ]
+        )
         result = job.apply_async()
         result.get()  # Wait for all tasks in group to complete
 
     elapsed = time.time() - start
-    print(f"  {elapsed:.3f}s ({elapsed*20:.2f}ms per workflow)")
+    print(f"  {elapsed:.3f}s ({elapsed * 20:.2f}ms per workflow)")
     return elapsed
+
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
+
 def check_redis_connection():
     """Check if Redis is running."""
     import redis as redis_client
+
     try:
-        r = redis_client.Redis(host='localhost', port=6379, db=1)
+        r = redis_client.Redis(host="localhost", port=6379, db=1)
         r.ping()
         print("✓ Redis connection successful")
         return True
@@ -169,6 +182,7 @@ def check_redis_connection():
         print("\n  Please start Redis:")
         print("    redis-server")
         return False
+
 
 def check_celery_workers():
     """Check if Celery workers are running."""
@@ -186,23 +200,31 @@ def check_celery_workers():
         else:
             print("✗ No Celery workers detected")
             print("\n  Please start Celery workers:")
-            print("    celery -A benchmark_celery worker --loglevel=info --concurrency=3 --prefetch-multiplier=1")
+            print(
+                "    celery -A benchmark_celery worker --loglevel=info "
+                "--concurrency=3 --prefetch-multiplier=1"
+            )
             return False
     except Exception as e:
         print(f"✗ Cannot connect to Celery broker: {e}")
         print("\n  Please start Celery workers:")
-        print("    celery -A benchmark_celery worker --loglevel=info --concurrency=3 --prefetch-multiplier=1")
+        print(
+            "    celery -A benchmark_celery worker --loglevel=info "
+            "--concurrency=3 --prefetch-multiplier=1"
+        )
         return False
+
 
 # ============================================================================
 # Main Benchmark Runner
 # ============================================================================
 
+
 def main():
     """Run all Celery benchmarks."""
-    print("="*80)
+    print("=" * 80)
     print("Celery Benchmark")
-    print("="*80)
+    print("=" * 80)
 
     if not check_redis_connection():
         sys.exit(1)
@@ -210,26 +232,27 @@ def main():
     if not check_celery_workers():
         sys.exit(1)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
 
     results = {}
 
     print("\n[1/3] Simple Sequential Execution")
-    results['simple'] = benchmark_celery_simple(100)
+    results["simple"] = benchmark_celery_simple(100)
 
     print("\n[2/3] Multi-Worker Concurrent")
-    results['concurrent'] = benchmark_celery_concurrent(3, 100)
+    results["concurrent"] = benchmark_celery_concurrent(3, 100)
 
     print("\n[3/3] Parallel Task Execution")
-    results['parallel'] = benchmark_celery_parallel(50)
+    results["parallel"] = benchmark_celery_parallel(50)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("SUMMARY")
-    print("="*80)
+    print("=" * 80)
     print(f"\nSimple execution:  {results['simple']:.3f}s")
     print(f"Multi-worker:      {results['concurrent']:.3f}s")
     print(f"Parallel:          {results['parallel']:.3f}s")
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
+
 
 if __name__ == "__main__":
     try:

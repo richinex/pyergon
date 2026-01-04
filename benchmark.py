@@ -12,14 +12,14 @@ Usage:
 
 import asyncio
 import cProfile
-import pstats
 import logging
+import pstats
 from dataclasses import dataclass
 from io import StringIO
 
-from pyergon import flow, flow_type, step, Executor, Scheduler, Worker
-from pyergon.storage.memory import InMemoryExecutionLog
+from pyergon import Executor, Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
+from pyergon.storage.memory import InMemoryExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
 
@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.CRITICAL)
 @flow_type
 class SimpleStepFlow:
     """Minimal flow to measure step execution overhead."""
+
     id: str
 
     @step
@@ -53,6 +54,7 @@ class SimpleStepFlow:
 @flow_type
 class ParallelStepFlow:
     """Flow with parallel steps for concurrency testing."""
+
     id: str
 
     @step
@@ -76,11 +78,7 @@ class ParallelStepFlow:
 
     @flow
     async def run(self) -> int:
-        results = await asyncio.gather(
-            self.compute_a(),
-            self.compute_b(),
-            self.compute_c()
-        )
+        results = await asyncio.gather(self.compute_a(), self.compute_b(), self.compute_c())
         return await self.aggregate(results[0], results[1], results[2])
 
 
@@ -155,7 +153,7 @@ async def benchmark_parallel_steps(count: int = 50) -> float:
 async def run_all_benchmarks():
     """Run all benchmarks with profiling."""
     print("Starting Ergon Framework Benchmarks\n")
-    print("="*70)
+    print("=" * 70)
 
     # Profile simple steps
     print("[1/3] Benchmarking simple step execution...")
@@ -163,10 +161,10 @@ async def run_all_benchmarks():
     pr.enable()
     elapsed = await benchmark_simple_steps(100)
     pr.disable()
-    print(f"  100 flows, 3 steps each: {elapsed:.3f}s ({elapsed*10:.2f}ms per flow)")
+    print(f"  100 flows, 3 steps each: {elapsed:.3f}s ({elapsed * 10:.2f}ms per flow)")
 
     s = StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
     ps.print_stats(15)
     simple_profile = s.getvalue()
 
@@ -176,10 +174,10 @@ async def run_all_benchmarks():
     pr.enable()
     elapsed = await benchmark_multi_worker(3, 100)
     pr.disable()
-    print(f"  3 workers, 100 flows: {elapsed:.3f}s ({elapsed*10:.2f}ms per flow)")
+    print(f"  3 workers, 100 flows: {elapsed:.3f}s ({elapsed * 10:.2f}ms per flow)")
 
     s = StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
     ps.print_stats(15)
     multiworker_profile = s.getvalue()
 
@@ -189,33 +187,33 @@ async def run_all_benchmarks():
     pr.enable()
     elapsed = await benchmark_parallel_steps(50)
     pr.disable()
-    print(f"  50 flows with parallel steps: {elapsed:.3f}s ({elapsed*20:.2f}ms per flow)")
+    print(f"  50 flows with parallel steps: {elapsed:.3f}s ({elapsed * 20:.2f}ms per flow)")
 
     s = StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
     ps.print_stats(15)
     parallel_profile = s.getvalue()
 
     # Write detailed profiling results
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DETAILED PROFILING RESULTS")
-    print("="*70)
+    print("=" * 70)
 
     print("\n[1] Simple Step Execution Profile (Top 15 Functions)")
-    print("-"*70)
+    print("-" * 70)
     print(simple_profile)
 
     print("\n[2] Multi-Worker Profile (Top 15 Functions)")
-    print("-"*70)
+    print("-" * 70)
     print(multiworker_profile)
 
     print("\n[3] Parallel Steps Profile (Top 15 Functions)")
-    print("-"*70)
+    print("-" * 70)
     print(parallel_profile)
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("SUMMARY")
-    print("="*70)
+    print("=" * 70)
     print("All benchmarks completed successfully.")
     print("Review the profiling data above to identify bottlenecks.")
 

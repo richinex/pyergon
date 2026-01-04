@@ -1,18 +1,15 @@
-"""
-Storage layer for ergon durable execution.
+"""Storage backends for durable workflow state persistence.
 
-This module provides storage backends for persisting workflow state:
-- ExecutionLog: Abstract interface (Protocol using ABC)
-- SqliteExecutionLog: SQLite-backed storage
-- RedisExecutionLog: Redis-backed distributed storage
-- InMemoryExecutionLog: In-memory storage for testing
+Provides multiple storage implementations behind a common interface:
+    - ExecutionLog: Abstract interface
+    - SqliteExecutionLog: SQLite-backed storage
+    - RedisExecutionLog: Redis-backed distributed storage
+    - InMemoryExecutionLog: In-memory storage for testing
 
-Design Pattern: Adapter Pattern (Chapter 10)
-All storage implementations adapt to the ExecutionLog interface,
-allowing clients to work with any storage backend uniformly.
-
-Design Principle: Dependency Inversion (SOLID)
-Clients depend on ExecutionLog abstraction, not concrete implementations.
+Design: Adapter Pattern + Dependency Inversion (SOLID)
+    All storage implementations adapt to ExecutionLog interface.
+    Clients depend on abstraction, not concrete implementations,
+    enabling easy swapping between storage backends.
 """
 
 from pyergon.storage.base import (

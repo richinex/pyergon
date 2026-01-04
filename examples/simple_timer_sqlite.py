@@ -19,16 +19,17 @@ PYTHONPATH=src python examples/simple_timer_sqlite.py
 import asyncio
 from dataclasses import dataclass
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
-from pyergon.storage.sqlite import SqliteExecutionLog
-from pyergon.executor.timer import schedule_timer_named
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
+from pyergon.executor.timer import schedule_timer_named
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 @dataclass
 @flow_type
 class TimedTask:
     """A simple task that waits on a timer."""
+
     id: str
 
     @step

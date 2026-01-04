@@ -17,11 +17,12 @@ PYTHONPATH=src python examples/test_dag_multiple_invoke_versioned.py
 """
 
 import asyncio
-import uuid
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from pyergon import flow, flow_type, step, Scheduler, Worker
+
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 
@@ -34,9 +35,11 @@ def ts() -> str:
 # Child Flow 1 - Payment
 # =============================================================================
 
+
 @dataclass
 class PaymentResult:
     """Payment processing result."""
+
     transaction_id: str
 
 
@@ -44,6 +47,7 @@ class PaymentResult:
 @flow_type(invokable=PaymentResult)
 class PaymentFlow:
     """Child flow for processing payments."""
+
     order_id: str
     amount: float
 
@@ -53,18 +57,18 @@ class PaymentFlow:
         print(f"[{ts()}]   CHILD: Processing payment ${self.amount:.2f}")
         await asyncio.sleep(0.1)  # 100ms
 
-        return PaymentResult(
-            transaction_id=f"TXN-{str(uuid.uuid4())[:8]}"
-        )
+        return PaymentResult(transaction_id=f"TXN-{str(uuid.uuid4())[:8]}")
 
 
 # =============================================================================
 # Child Flow 2 - Shipment
 # =============================================================================
 
+
 @dataclass
 class ShipmentResult:
     """Shipment creation result."""
+
     tracking: str
 
 
@@ -72,6 +76,7 @@ class ShipmentResult:
 @flow_type(invokable=ShipmentResult)
 class ShipmentFlow:
     """Child flow for creating shipments."""
+
     order_id: str
 
     @flow
@@ -80,19 +85,19 @@ class ShipmentFlow:
         print(f"[{ts()}]   CHILD: Creating shipment")
         await asyncio.sleep(0.1)  # 100ms
 
-        return ShipmentResult(
-            tracking=f"TRK-{str(uuid.uuid4())[:8]}"
-        )
+        return ShipmentResult(tracking=f"TRK-{str(uuid.uuid4())[:8]}")
 
 
 # =============================================================================
 # Parent Flow - Order
 # =============================================================================
 
+
 @dataclass
 @flow_type
 class Order:
     """Parent flow that orchestrates payment and shipment."""
+
     id: str
 
     @step
@@ -125,19 +130,10 @@ class Order:
 
         # Invoke children at flow level
         print(f"[{ts()}] Flow: invoking Payment child")
-        payment_result = await self.invoke(
-            PaymentFlow(
-                order_id=self.id,
-                amount=99.99
-            )
-        ).result()
+        payment_result = await self.invoke(PaymentFlow(order_id=self.id, amount=99.99)).result()
 
         print(f"[{ts()}] Flow: invoking Shipment child")
-        shipment_result = await self.invoke(
-            ShipmentFlow(
-                order_id=self.id
-            )
-        ).result()
+        shipment_result = await self.invoke(ShipmentFlow(order_id=self.id)).result()
 
         # Process results in atomic steps
         await self.finalize_payment(payment_result)
@@ -149,6 +145,7 @@ class Order:
 # =============================================================================
 # Main
 # =============================================================================
+
 
 async def main():
     """Run the multi-invoke versioned example."""
@@ -183,10 +180,7 @@ async def main():
 
     # Create worker and register handlers
     # Poll interval in seconds: 0.05 = 50ms (matching Rust Duration::from_millis(50))
-    worker = Worker(
-        storage=storage,
-        worker_id="worker"
-    ).with_poll_interval(0.05)
+    worker = Worker(storage=storage, worker_id="worker").with_poll_interval(0.05)
 
     await worker.register(Order)
     await worker.register(PaymentFlow)

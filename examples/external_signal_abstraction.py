@@ -23,15 +23,15 @@ PYTHONPATH=src python examples/external_signal_abstraction.py
 """
 
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional, Dict, Protocol
 import pickle
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Protocol
 
-from pyergon import flow, flow_type, step, Scheduler, Worker
-from pyergon.storage.sqlite import SqliteExecutionLog
-from pyergon.executor.signal import await_external_signal
+from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
+from pyergon.executor.signal import await_external_signal
+from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 # Global execution counters
@@ -46,6 +46,7 @@ class Counters:
 # Custom Error Type
 # ============================================================================
 
+
 class DocumentError(Exception):
     """Custom domain error for document approval workflow."""
 
@@ -54,7 +55,7 @@ class DocumentError(Exception):
         return isinstance(self, InfrastructureError)
 
 
-class ManagerRejection(DocumentError):
+class ManagerRejectionError(DocumentError):
     """Document was rejected by manager (permanent business decision)."""
 
     def __init__(self, by: str, reason: str):
@@ -63,7 +64,7 @@ class ManagerRejection(DocumentError):
         super().__init__(f"Document rejected by {by} - {reason}")
 
 
-class LegalRejection(DocumentError):
+class LegalRejectionError(DocumentError):
     """Document was rejected by legal team (permanent business decision)."""
 
     def __init__(self, by: str, reason: str):
@@ -83,9 +84,11 @@ class InfrastructureError(DocumentError):
 # Domain Types
 # ============================================================================
 
+
 @dataclass
 class ApprovalDecision:
     """Decision from an approver."""
+
     approved: bool
     approver: str
     comments: str
@@ -95,22 +98,22 @@ class ApprovalDecision:
 @dataclass
 class ApprovalOutcome:
     """Outcome of an approval step (both approved and rejected are valid outcomes)."""
+
     approved: bool
     by: str
     message: str
 
     @staticmethod
-    def from_decision(decision: ApprovalDecision) -> 'ApprovalOutcome':
+    def from_decision(decision: ApprovalDecision) -> "ApprovalOutcome":
         return ApprovalOutcome(
-            approved=decision.approved,
-            by=decision.approver,
-            message=decision.comments
+            approved=decision.approved, by=decision.approver, message=decision.comments
         )
 
 
 @dataclass
 class DocumentSubmission:
     """Document to be approved."""
+
     document_id: str
     title: str
     author: str
@@ -121,10 +124,11 @@ class DocumentSubmission:
 # Signal Source Abstraction
 # ============================================================================
 
+
 class SignalSource(Protocol):
     """Protocol for external signal sources."""
 
-    async def poll_for_signal(self, signal_name: str) -> Optional[bytes]:
+    async def poll_for_signal(self, signal_name: str) -> bytes | None:
         """Poll for a signal. Returns signal data if available."""
         ...
 
@@ -137,19 +141,15 @@ class SignalSource(Protocol):
 # Simulated User Input Source
 # ============================================================================
 
+
 class SimulatedUserInputSource:
     """Simulates user input with decisions after a delay."""
 
     def __init__(self):
-        self.signals: Dict[str, bytes] = {}
+        self.signals: dict[str, bytes] = {}
         self._lock = asyncio.Lock()
 
-    async def simulate_user_decision(
-        self,
-        signal_name: str,
-        delay: float,
-        approve: bool
-    ) -> None:
+    async def simulate_user_decision(self, signal_name: str, delay: float, approve: bool) -> None:
         """Simulate user making a decision after a delay."""
         await asyncio.sleep(delay)
 
@@ -157,7 +157,7 @@ class SimulatedUserInputSource:
             approved=approve,
             approver="manager@company.com",
             comments="Looks good, approved!" if approve else "Needs revision",
-            timestamp=int(datetime.now(timezone.utc).timestamp())
+            timestamp=int(datetime.now(UTC).timestamp()),
         )
 
         data = pickle.dumps(decision)
@@ -167,7 +167,7 @@ class SimulatedUserInputSource:
 
         print(f"  [INPUT] User decision received for '{signal_name}'")
 
-    async def poll_for_signal(self, signal_name: str) -> Optional[bytes]:
+    async def poll_for_signal(self, signal_name: str) -> bytes | None:
         """Poll for a signal."""
         async with self._lock:
             return self.signals.get(signal_name)
@@ -182,10 +182,12 @@ class SimulatedUserInputSource:
 # Document Approval Workflow
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class DocumentApprovalFlow:
     """Document approval workflow with manager and legal review."""
+
     submission: DocumentSubmission
 
     @flow
@@ -212,10 +214,7 @@ class DocumentApprovalFlow:
         # Flow decides what rejection MEANS (permanent failure)
         if not manager_outcome.approved:
             print("       [COMPLETE] Document rejected (permanent)")
-            raise ManagerRejection(
-                by=manager_outcome.by,
-                reason=manager_outcome.message
-            )
+            raise ManagerRejectionError(by=manager_outcome.by, reason=manager_outcome.message)
 
         # Step 3: Wait for legal review (SUSPENDS AGAIN!)
         await self.await_legal_review()
@@ -277,10 +276,7 @@ class DocumentApprovalFlow:
 
         if not decision.approved:
             print(f"       [REJECTED] Legal rejected by {decision.approver} - {decision.comments}")
-            raise LegalRejection(
-                by=decision.approver,
-                reason=decision.comments
-            )
+            raise LegalRejectionError(by=decision.approver, reason=decision.comments)
 
         print(f"       [OK] Legal approved by {decision.approver} - {decision.comments}")
 
@@ -297,6 +293,7 @@ class DocumentApprovalFlow:
 # Main Example
 # ============================================================================
 
+
 async def main():
     """Run the external signal abstraction example."""
     storage = SqliteExecutionLog("data/sig_abstraction.db")
@@ -311,7 +308,7 @@ async def main():
         document_id="DOC-001",
         title="Q4 Financial Report",
         author="john.doe@company.com",
-        content="Financial summary for Q4..."
+        content="Financial summary for Q4...",
     )
 
     flow1 = DocumentApprovalFlow(submission=doc1)
@@ -321,7 +318,7 @@ async def main():
         document_id="DOC-002",
         title="Policy Update Draft",
         author="jane.smith@company.com",
-        content="Proposed policy changes..."
+        content="Proposed policy changes...",
     )
 
     flow2 = DocumentApprovalFlow(submission=doc2)
@@ -338,7 +335,7 @@ async def main():
         signal_source.simulate_user_decision(
             f"manager_approval_{doc1.document_id}",
             1.0,
-            True  # approve
+            True,  # approve
         )
     )
 
@@ -347,7 +344,7 @@ async def main():
         signal_source.simulate_user_decision(
             f"legal_review_{doc1.document_id}",
             2.0,
-            True  # approve
+            True,  # approve
         )
     )
 
@@ -362,13 +359,13 @@ async def main():
     # Simulate manager rejecting DOC-002 after 1 second
     # Key insight: Rejection is an OUTCOME (step succeeds), not an error
     # The step returns ApprovalOutcome with approved=False and is CACHED
-    # The flow then raises ManagerRejection (permanent failure)
+    # The flow then raises ManagerRejectionError (permanent failure)
     # Result: Flow fails immediately with no retries (signal consumed only once)
     asyncio.create_task(
         signal_source.simulate_user_decision(
             f"manager_approval_{doc2.document_id}",
             1.0,
-            False  # reject
+            False,  # reject
         )
     )
 
@@ -383,7 +380,7 @@ async def main():
     await handle.shutdown()
     await storage.close()
 
-    print(f"\n[PASS] Example completed!")
+    print("\n[PASS] Example completed!")
     print(f"  Validate count: {Counters.validate}")
     print(f"  Manager approval count: {Counters.manager_approval}")
     print(f"  Legal review count: {Counters.legal_review}")

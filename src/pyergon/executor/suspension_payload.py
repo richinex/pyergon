@@ -1,18 +1,7 @@
-"""
-SuspensionPayload - Data structure for suspension resolution.
+"""Suspension resolution payload data structure.
 
-**Rust Reference**:
-`/home/richinex/Documents/devs/rust_projects/ergon/ergon/src/executor/child_flow.rs` lines 42-62
-
-This module provides SuspensionPayload, which carries the result of a suspension
-(timer or signal) back to the suspended flow.
-
-**Python Documentation**:
-- Dataclasses: https://docs.python.org/3/library/dataclasses.html
-- bytes type: https://docs.python.org/3/library/stdtypes.html#bytes
-
-From Dave Cheney: "Make the zero value useful"
-All fields have sensible defaults where applicable.
+Provides SuspensionPayload, which carries the result of a suspension
+(timer or signal) back to the suspended flow when it resumes.
 """
 
 from dataclasses import dataclass
@@ -22,35 +11,16 @@ __all__ = ["SuspensionPayload"]
 
 @dataclass(frozen=True)
 class SuspensionPayload:
-    """
-    Payload structure for suspension mechanisms (signals, timers).
+    """Payload structure for suspension resolution.
 
-    **Rust Reference**: `src/executor/child_flow.rs` lines 42-62
-
-    This is the data structure passed when resuming a suspended flow.
-    It contains the result of what the flow was waiting for (child completion,
+    Data structure passed when resuming a suspended flow. Contains
+    the result of what the flow was waiting for (child completion,
     timer expiry, or external signal).
 
-    **Python Best Practice**: Using frozen dataclass for immutability
-    Reference: BEST_PRACTICES.md section "Dataclasses (Data Structures)"
-
     Attributes:
-        success: Whether the suspension resolved successfully (True) or failed (False)
-        data: The serialized data:
-              - For signals (child flows): the child flow's result or error message
-              - For timers: empty bytes (timer just marks delay completion)
-        is_retryable: Whether the error is retryable (only meaningful when success=False)
-                     None means not applicable (success=True or non-retryable error)
-
-    **From Rust**:
-    ```rust
-    pub struct SuspensionPayload {
-        pub success: bool,
-        pub data: Vec<u8>,
-        #[serde(default)]
-        pub is_retryable: Option<bool>,
-    }
-    ```
+        success: Whether suspension resolved successfully or failed
+        data: Serialized data (child flow result, error message, or empty for timers)
+        is_retryable: Whether error is retryable (only meaningful when success=False)
 
     Example:
         ```python
@@ -75,32 +45,11 @@ class SuspensionPayload:
             is_retryable=None
         )
         ```
-
-    Note:
-        This is an immutable value type (frozen=True).
-        Create new instances rather than modifying fields.
     """
 
     success: bool
-    """Whether the suspension resolved successfully (True) or failed (False)"""
-
     data: bytes
-    """
-    Serialized data for the suspension result.
-
-    - For child flows: pickled result or error
-    - For timers: empty bytes b""
-    - For external signals: application-specific data
-    """
-
     is_retryable: bool | None = None
-    """
-    Whether the error is retryable (only meaningful when success=False).
-
-    - None: Not applicable (success=True or non-retryable error)
-    - True: Error can be retried
-    - False: Error is permanent, don't retry
-    """
 
     def __repr__(self) -> str:
         """Readable representation for debugging."""

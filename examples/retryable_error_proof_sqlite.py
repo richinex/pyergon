@@ -5,14 +5,14 @@ This example demonstrates retryability with persistent SQLite storage:
 - Concrete evidence that Retryable trait controls retry behavior
 - Differential behavior between retryable and non-retryable errors
 - Execution counters proving retry logic respects is_retryable()
-- Retryable errors are automatically retried (ApiTimeout)
-- Non-retryable errors fail immediately without retry (ItemNotFound)
+- Retryable errors are automatically retried (ApiTimeoutError)
+- Non-retryable errors fail immediately without retry (ItemNotFoundError)
 - Storage persistence across worker restarts
 
 ## Scenario
 Two parallel test cases run simultaneously: Scenario A returns a retryable error
-(ApiTimeout with is_retryable() = true), which causes the step to execute 3 times
-before succeeding. Scenario B returns a non-retryable error (ItemNotFound with
+(ApiTimeoutError with is_retryable() = true), which causes the step to execute 3 times
+before succeeding. Scenario B returns a non-retryable error (ItemNotFoundError with
 is_retryable() = false), which causes the step to execute only 1 time and fail
 immediately without retry.
 
@@ -32,9 +32,10 @@ PYTHONPATH=src python examples/retryable_error_proof_sqlite.py
 
 import asyncio
 from dataclasses import dataclass
-from pyergon import flow, flow_type, step, Scheduler, Worker
+
+from pyergon import Scheduler, Worker, flow, flow_type, step
+from pyergon.core import RetryableError, RetryPolicy, TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
-from pyergon.core import RetryPolicy, RetryableError, TaskStatus
 
 # Global counters - this is our EVIDENCE
 STEP_A_EXECUTIONS = 0
@@ -45,12 +46,14 @@ STEP_B_EXECUTIONS = 0
 # Custom Error Type with Retryable Trait
 # ============================================================================
 
+
 class InventoryError(RetryableError):
     """Base class for inventory errors."""
+
     pass
 
 
-class ApiTimeout(InventoryError):
+class ApiTimeoutError(InventoryError):
     """TRANSIENT error - network timeout, should retry."""
 
     def __str__(self):
@@ -61,7 +64,7 @@ class ApiTimeout(InventoryError):
         return True
 
 
-class ItemNotFound(InventoryError):
+class ItemNotFoundError(InventoryError):
     """PERMANENT error - item doesn't exist, no point retrying."""
 
     def __init__(self, item: str):
@@ -79,10 +82,12 @@ class ItemNotFound(InventoryError):
 # Scenario A: RETRYABLE Error (should execute 3 times)
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class OrderA:
     """Flow with retryable error - should execute 3 times."""
+
     order_id: str
 
     @step
@@ -97,8 +102,8 @@ class OrderA:
         # Fail first 2 times with RETRYABLE error
         if count < 3:
             print("    API timeout occurred (transient network error)")
-            print("    Returning ApiTimeout")
-            raise ApiTimeout()
+            print("    Returning ApiTimeoutError")
+            raise ApiTimeoutError()
 
         # Success on 3rd attempt
         print(f"    Inventory check succeeded on attempt {count}")
@@ -119,10 +124,12 @@ class OrderA:
 # Scenario B: NON-RETRYABLE Error (should execute ONLY 1 time)
 # ============================================================================
 
+
 @dataclass
 @flow_type
 class OrderB:
     """Flow with non-retryable error - should execute only once."""
+
     order_id: str
     item_sku: str
 
@@ -138,8 +145,8 @@ class OrderB:
 
         # ALWAYS fail with NON-RETRYABLE error
         print("    Item not found in catalog (permanent error)")
-        print("    Returning ItemNotFound")
-        raise ItemNotFound(self.item_sku)
+        print("    Returning ItemNotFoundError")
+        raise ItemNotFoundError(self.item_sku)
 
     @flow(retry_policy=RetryPolicy.STANDARD)
     async def process_order(self) -> str:
@@ -155,6 +162,7 @@ class OrderB:
 # ============================================================================
 # Main - Run Both Scenarios and Show Evidence
 # ============================================================================
+
 
 async def run_scenario_a(storage):
     """Run Scenario A: Retryable error."""
@@ -207,8 +215,8 @@ async def main():
     print("=" * 70)
     print()
     print("Running two scenarios with persistent SQLite storage:")
-    print("  Scenario A: ApiTimeout (is_retryable = true)")
-    print("  Scenario B: ItemNotFound (is_retryable = false)")
+    print("  Scenario A: ApiTimeoutError (is_retryable = true)")
+    print("  Scenario B: ItemNotFoundError (is_retryable = false)")
     print()
     print("=" * 70)
 
@@ -234,15 +242,15 @@ async def main():
     print("PROOF - EXECUTION COUNTERS")
     print("=" * 70)
     print()
-    print(f"Scenario A (ApiTimeout - retryable):")
+    print("Scenario A (ApiTimeoutError - retryable):")
     print(f"  STEP_A_EXECUTIONS = {STEP_A_EXECUTIONS}")
-    print(f"  Expected: 3 (initial attempt + 2 retries)")
+    print("  Expected: 3 (initial attempt + 2 retries)")
     print(f"  Status: {result_a.status.name if result_a else 'UNKNOWN'}")
     print(f"  Retry count: {result_a.retry_count if result_a else 'N/A'}")
     print()
-    print(f"Scenario B (ItemNotFound - non-retryable):")
+    print("Scenario B (ItemNotFoundError - non-retryable):")
     print(f"  STEP_B_EXECUTIONS = {STEP_B_EXECUTIONS}")
-    print(f"  Expected: 1 (no retries)")
+    print("  Expected: 1 (no retries)")
     print(f"  Status: {result_b.status.name if result_b else 'UNKNOWN'}")
     print(f"  Retry count: {result_b.retry_count if result_b else 'N/A'}")
     print()
@@ -261,8 +269,8 @@ async def main():
     print("=" * 70)
     print()
     print("Key Observations:")
-    print("1. ApiTimeout (retryable) executed 3 times before success")
-    print("2. ItemNotFound (non-retryable) executed only 1 time")
+    print("1. ApiTimeoutError (retryable) executed 3 times before success")
+    print("2. ItemNotFoundError (non-retryable) executed only 1 time")
     print("3. is_retryable() controls retry behavior")
     print("4. RetryPolicy configuration respects Retryable trait")
     print("5. SQLite correctly persists is_retryable flags")
@@ -271,8 +279,12 @@ async def main():
     # Verify the evidence
     assert STEP_A_EXECUTIONS == 3, f"Expected 3 executions for Scenario A, got {STEP_A_EXECUTIONS}"
     assert STEP_B_EXECUTIONS == 1, f"Expected 1 execution for Scenario B, got {STEP_B_EXECUTIONS}"
-    assert result_a.status == TaskStatus.COMPLETE, f"Scenario A should be COMPLETE, got {result_a.status.name}"
-    assert result_b.status == TaskStatus.FAILED, f"Scenario B should be FAILED, got {result_b.status.name}"
+    assert result_a.status == TaskStatus.COMPLETE, (
+        f"Scenario A should be COMPLETE, got {result_a.status.name}"
+    )
+    assert result_b.status == TaskStatus.FAILED, (
+        f"Scenario B should be FAILED, got {result_b.status.name}"
+    )
     assert not has_non_retryable_a, "Flow A should NOT have non-retryable error"
     assert has_non_retryable_b, "Flow B should have non-retryable error"
 

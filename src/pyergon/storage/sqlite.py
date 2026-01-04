@@ -1,19 +1,12 @@
-"""
-SQLite-backed storage implementation for pyergon.
+"""SQLite-backed storage implementation for pyergon.
 
-Design Pattern: Adapter Pattern (Chapter 10)
+Design Pattern: Adapter Pattern
 SqliteExecutionLog adapts SQLite database to the ExecutionLog interface.
 
-From Dave Cheney's Practical Go:
-"Keep package main small as small as possible" - complex database logic
-is isolated here, not scattered across the application.
+Complex database logic is isolated here, not scattered across the application.
 
-From Software Design Patterns:
-Like FootballData and VolleyballData adapting different data sources
-to GameData interface, SqliteExecutionLog adapts SQLite to ExecutionLog.
-
-Implementation follows Rust ergon's sqlite.rs with Python idioms:
-- aiosqlite for async operations (instead of r2d2 connection pool)
+Implementation details:
+- aiosqlite for async operations
 - WAL mode for concurrent reads
 - IMMEDIATE transactions for pessimistic locking
 - Indexes on (status, created_at) for efficient queue queries
@@ -39,15 +32,13 @@ from pyergon.storage.base import ExecutionLog, SignalInfo, StorageError
 
 
 class SqliteExecutionLog(ExecutionLog):
-    """
-    SQLite-backed durable storage.
+    """SQLite-backed durable storage.
 
     Design Principles Applied:
     - Single Responsibility: Only handles persistence (doesn't execute logic)
     - Dependency Inversion: Implements ExecutionLog protocol
     - Interface Segregation: Only implements needed methods
 
-    From Dave Cheney: "Make the zero value useful"
     After __init__, the instance is not yet usable. Call connect() first.
     This follows asyncio best practices (no async in __init__).
 
@@ -61,13 +52,7 @@ class SqliteExecutionLog(ExecutionLog):
     """
 
     def __init__(self, db_path: str):
-        """
-        Initialize storage with notification support (connection not opened yet).
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 65-76
-
-        From Dave Cheney: "Choose identifiers for clarity, not brevity"
-        db_path is clear; dbp or database_path would be worse.
+        """Initialize storage with notification support (connection not opened yet).
 
         Args:
             db_path: Path to SQLite database file
@@ -77,7 +62,6 @@ class SqliteExecutionLog(ExecutionLog):
         self._lock = asyncio.Lock()  # Serialize access to shared connection
 
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
-        # From Rust: work_notify: Arc<Notify>, timer_notify: Arc<Notify>
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
         self._status_notify = asyncio.Event()
@@ -108,12 +92,8 @@ class SqliteExecutionLog(ExecutionLog):
         return f"SqliteExecutionLog({self.db_path})"
 
     async def connect(self) -> None:
-        """
-        Open database connection and initialize schema.
+        """Open database connection and initialize schema.
 
-        **Rust Reference**: `src/storage/sqlite.rs` lines 75-98
-
-        From Dave Cheney: "Return early rather than nesting deeply"
         Uses guard clauses to check preconditions.
 
         Pattern: Template Method
@@ -123,25 +103,19 @@ class SqliteExecutionLog(ExecutionLog):
         3. Create tables
         4. Create indexes
         """
-        # Guard: Don't reconnect if already connected
         if self._connection is not None:
             return
 
-        # Create database file if doesn't exist
-        # From Rust: create_if_missing(true)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Open connection with timeout
-        # From Rust: busy_timeout(Duration::from_secs(5))
         self._connection = await aiosqlite.connect(
             self.db_path,
             timeout=5.0,
             isolation_level=None,  # Autocommit mode for better concurrency
         )
 
-        # Enable WAL mode for concurrent reads (from Rust ergon)
-        # From Rust: journal_mode(SqliteJournalMode::Wal)
-        # IMPORTANT: Must fetch the result, not just execute
+        # Enable WAL mode for concurrent reads
+        # Must fetch the result, not just execute
         # Note: In-memory databases return "memory" and don't support WAL
         cursor = await self._connection.execute("PRAGMA journal_mode=WAL")
         result = await cursor.fetchone()
@@ -153,8 +127,6 @@ class SqliteExecutionLog(ExecutionLog):
             if mode not in ("WAL", "MEMORY"):
                 raise StorageError(f"Failed to enable WAL mode, got: {result[0]}")
 
-        # Set synchronous mode to NORMAL for better performance
-        # From Rust: synchronous(SqliteSynchronous::Normal)
         await self._connection.execute("PRAGMA synchronous=NORMAL")
 
         # Set busy timeout
@@ -167,19 +139,15 @@ class SqliteExecutionLog(ExecutionLog):
         await self._connection.commit()
 
     async def _create_schema(self) -> None:
-        """
-        Create database tables and indexes.
+        """Create database tables and indexes.
 
-        **Rust Reference**: `src/storage/sqlite.rs` lines 131-226
-
-        EXACT MATCH: Schema matches Rust ergon's sqlite.rs precisely
-        - execution_log table (not execution_log)
-        - flow_queue table (not scheduled_flows)
-        - UPPERCASE status values to match Rust
-        - INTEGER timestamps (milliseconds) not TEXT
+        Schema design:
+        - execution_log table tracks individual step executions
+        - flow_queue table for distributed work queue
+        - UPPERCASE status values for consistency
+        - INTEGER timestamps (milliseconds) for precision
         """
         # execution_log table - tracks individual step executions
-        # **Rust Reference**: lines 133-154
         await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS execution_log (
                 id TEXT NOT NULL,
@@ -203,29 +171,22 @@ class SqliteExecutionLog(ExecutionLog):
             )
         """)
 
-        # Create index for efficient flow lookups
-        # **Rust Reference**: lines 157-159
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_execution_log_id
             ON execution_log(id)
         """)
 
-        # Create index for incomplete flow queries
-        # **Rust Reference**: lines 162-166
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_execution_log_status
             ON execution_log(step, status)
         """)
 
-        # Create index for timer queries (find expired timers)
-        # **Rust Reference**: lines 169-173
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_execution_log_timers
             ON execution_log(status, timer_fire_at)
         """)
 
         # flow_queue table - distributed work queue
-        # **Rust Reference**: lines 176-195
         await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS flow_queue (
                 task_id TEXT PRIMARY KEY,
@@ -247,15 +208,12 @@ class SqliteExecutionLog(ExecutionLog):
             )
         """)
 
-        # Create index for efficient pending flow lookups
-        # **Rust Reference**: lines 198-202
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_flow_queue_status
             ON flow_queue(status, created_at)
         """)
 
         # suspension_params table - durable suspension results (signals and timers)
-        # **Rust Reference**: lines 205-216
         await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS suspension_params (
                 flow_id TEXT NOT NULL,
@@ -267,16 +225,10 @@ class SqliteExecutionLog(ExecutionLog):
             )
         """)
 
-        # Create index for suspension parameter cleanup
-        # **Rust Reference**: lines 219-223
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_suspension_params_created
             ON suspension_params(created_at)
         """)
-
-    # ========================================================================
-    # Invocation Operations
-    # ========================================================================
 
     async def log_invocation_start(
         self,
@@ -289,23 +241,16 @@ class SqliteExecutionLog(ExecutionLog):
         delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
-        """
-        Record the start of a step execution.
+        """Record the start of a step execution.
 
-        RUST COMPLIANCE: Matches Rust ExecutionLog::log_invocation_start
-        Updated to handle all new Invocation fields.
-
-        From Dave Cheney: "Eliminate error handling by eliminating errors"
-        Using REPLACE instead of INSERT handles duplicate starts gracefully
+        Using INSERT with ON CONFLICT handles duplicate starts gracefully
         (idempotent operation).
         """
         import json
 
         self._check_connected()
 
-        # Get current timestamp in milliseconds (matches Rust line 373)
         timestamp_ms = int(datetime.now().timestamp() * 1000)
-        # Use flow_id as invocation id (matches Rust line 371: .bind(id.to_string()))
         invocation_id = flow_id
 
         # Serialize retry policy to JSON if present
@@ -320,7 +265,6 @@ class SqliteExecutionLog(ExecutionLog):
                 }
             )
 
-        # Use INSERT with ON CONFLICT for idempotency (matches Rust line 365-369)
         await self._connection.execute(
             """
             INSERT INTO execution_log (
@@ -347,11 +291,10 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-        # Return created invocation (note: Rust doesn't return, but Python code expects it)
         timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000.0)
         return Invocation(
             id=invocation_id,
-            flow_id=flow_id,  # Redundant with id, but kept for compatibility
+            flow_id=flow_id,
             step=step,
             class_name=class_name,
             method_name=method_name,
@@ -359,7 +302,7 @@ class SqliteExecutionLog(ExecutionLog):
             params_hash=params_hash,
             return_value=None,
             status=InvocationStatus.PENDING,
-            attempts=1,  # Matches INSERT value
+            attempts=1,
             is_retryable=None,
             timestamp=timestamp_dt,
             updated_at=timestamp_dt,
@@ -372,15 +315,12 @@ class SqliteExecutionLog(ExecutionLog):
     async def log_invocation_completion(
         self, flow_id: str, step: int, return_value: bytes
     ) -> Invocation:
-        """
-        Record the completion of a step execution.
+        """Record the completion of a step execution.
 
-        From Dave Cheney: "Only handle an error once"
-        If invocation not found, raises StorageError. Caller handles it.
+        Raises StorageError if invocation not found.
         """
         self._check_connected()
 
-        # Update existing invocation (matches Rust line 399-408)
         cursor = await self._connection.execute(
             """
             UPDATE execution_log
@@ -406,15 +346,12 @@ class SqliteExecutionLog(ExecutionLog):
         return invocation
 
     async def get_invocation(self, flow_id: str, step: int) -> Invocation | None:
-        """
-        Retrieve a specific step invocation.
+        """Retrieve a specific step invocation.
 
-        From Dave Cheney: "Make the zero value useful"
         Returns None when not found (not an error condition).
         """
         self._check_connected()
 
-        # Matches Rust SELECT query (sqlite.rs:435-437)
         cursor = await self._connection.execute(
             """
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
@@ -434,15 +371,12 @@ class SqliteExecutionLog(ExecutionLog):
         return self._row_to_invocation(row)
 
     async def get_incomplete_flows(self) -> list[Invocation]:
-        """
-        Get all flows with incomplete execution_log.
+        """Get all flows with incomplete execution_log.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
-        Simple query, early return if no results.
+        Returns empty list if no incomplete flows found.
         """
         self._check_connected()
 
-        # Get incomplete flows - step 0 is the flow entry point
         cursor = await self._connection.execute("""
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
                    parameters, params_hash, return_value, delay, retry_policy,
@@ -456,13 +390,9 @@ class SqliteExecutionLog(ExecutionLog):
         return [self._row_to_invocation(row) for row in rows]
 
     async def has_non_retryable_error(self, flow_id: str) -> bool:
-        """
-        Check if flow has encountered a non-retryable error.
+        """Check if flow has encountered a non-retryable error.
 
-        From Dave Cheney: "Eliminate error handling by eliminating errors"
         Simple boolean return eliminates need for exception handling.
-
-        **Rust Reference**: has_non_retryable_error (sqlite.rs:531-549)
         """
         self._check_connected()
 
@@ -479,15 +409,8 @@ class SqliteExecutionLog(ExecutionLog):
         row = await cursor.fetchone()
         return bool(row[0]) if row else False
 
-    # ========================================================================
-    # Queue Operations
-    # ========================================================================
-
     async def enqueue_flow(self, flow: ScheduledFlow) -> str:
-        """
-        Add a flow to the distributed work queue.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 593-629
+        """Add a flow to the distributed work queue.
 
         Args:
             flow: ScheduledFlow object with all metadata
@@ -541,22 +464,17 @@ class SqliteExecutionLog(ExecutionLog):
             await self._connection.commit()
 
             # Wake up one waiting worker if this is an immediate (non-delayed) flow
-            # **Rust Reference**: lines 624-626
             if flow.scheduled_for is None:
                 self._work_notify.set()
                 # NOTE: Don't clear here! Worker clears after waking up.
-                # Clearing immediately would lose the notification if worker isn't waiting yet.
 
         return flow.task_id
 
     async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
-        """
-        Claim and retrieve a pending flow from the queue.
+        """Claim and retrieve a pending flow from the queue.
 
-        **Rust Reference**: `src/storage/sqlite.rs` lines 631-671
-
-        From Rust ergon: Uses optimistic concurrency with atomic UPDATE
-        to prevent double-execution in distributed system.
+        Uses optimistic concurrency with atomic UPDATE to prevent
+        double-execution in distributed system.
 
         Design Pattern: Optimistic Concurrency Control
         UPDATE with WHERE status = 'PENDING' ensures only one worker claims each flow.
@@ -565,12 +483,8 @@ class SqliteExecutionLog(ExecutionLog):
 
         now_millis = int(datetime.now().timestamp() * 1000)
 
-        # Optimistic concurrency: Find and claim in a single atomic operation
-        # **Rust Reference**: lines 642-661
-        async with self._lock:  # Serialize access to connection
+        async with self._lock:
             try:
-                # Find a pending flow that is ready to execute
-                # (scheduled_for IS NULL or scheduled_for <= NOW)
                 cursor = await self._connection.execute(
                     """
                     UPDATE flow_queue
@@ -600,12 +514,9 @@ class SqliteExecutionLog(ExecutionLog):
                 row = await cursor.fetchone()
 
                 if row is None:
-                    # No pending flows, or another worker claimed it first
-                    # Must commit even when no row to close the transaction
                     await self._connection.commit()
                     return None
 
-                # Commit the update
                 await self._connection.commit()
 
                 # Parse timestamps from milliseconds
@@ -613,12 +524,10 @@ class SqliteExecutionLog(ExecutionLog):
                 updated_at = datetime.fromtimestamp(row[7] / 1000.0)
                 scheduled_for = datetime.fromtimestamp(row[10] / 1000.0) if row[10] else None
 
-                # Parse parent_metadata from parent_flow_id and signal_token
                 parent_metadata = None
-                if row[11] and row[12]:  # parent_flow_id and signal_token
+                if row[11] and row[12]:
                     parent_metadata = (row[11], row[12])
 
-                # Return ScheduledFlow
                 return ScheduledFlow(
                     task_id=row[0],
                     flow_id=row[1],
@@ -633,21 +542,17 @@ class SqliteExecutionLog(ExecutionLog):
                     scheduled_for=scheduled_for,
                     parent_metadata=parent_metadata,
                     version=row[13],
-                    claimed_at=datetime.now(),  # Python extension
-                    completed_at=None,  # Python extension
+                    claimed_at=datetime.now(),
+                    completed_at=None,
                 )
 
             except Exception as e:
-                # No need to rollback - aiosqlite handles it automatically
                 raise StorageError(f"Failed to dequeue flow: {e}") from e
 
     async def complete_flow(
         self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
-        """
-        Mark a flow task as complete, failed, or suspended.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 673-708
+        """Mark a flow task as complete, failed, or suspended.
 
         Args:
             task_id: The task identifier
@@ -659,7 +564,6 @@ class SqliteExecutionLog(ExecutionLog):
         now_millis = int(datetime.now().timestamp() * 1000)
 
         # When marking as SUSPENDED, clear the lock so flow can be resumed
-        # **Rust Reference**: lines 675-686
         if status == TaskStatus.SUSPENDED:
             if error_message is not None:
                 cursor = await self._connection.execute(
@@ -712,16 +616,11 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-        # Notify any waiters that a flow status changed
-        # **Rust Reference**: line 706
         self._status_notify.set()
-        self._status_notify.clear()  # Reset for next notification
+        self._status_notify.clear()
 
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
-        """
-        Reschedule a failed flow for retry after a delay.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 710-745
+        """Reschedule a failed flow for retry after a delay.
 
         This method:
         1. Increments retry_count
@@ -743,8 +642,6 @@ class SqliteExecutionLog(ExecutionLog):
         scheduled_for_millis = int((now + delay).timestamp() * 1000)
         now_millis = int(now.timestamp() * 1000)
 
-        # UPDATE flow_queue SET retry_count = retry_count + 1, ...
-        # **Rust Reference**: lines 721-737
         cursor = await self._connection.execute(
             """
             UPDATE flow_queue
@@ -764,17 +661,13 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-        # Notify workers that new work is available (or will be available soon)
-        # **Rust Reference**: line 743
         self._work_notify.set()
-        self._work_notify.clear()  # Reset for next notification
+        self._work_notify.clear()
 
     async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
-        """
-        Retrieve a scheduled flow by task ID.
+        """Retrieve a scheduled flow by task ID.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
-        Simple query → None if not found → return result.
+        Returns None if not found.
         """
         self._check_connected()
 
@@ -814,18 +707,12 @@ class SqliteExecutionLog(ExecutionLog):
             error_message=row[11],
         )
 
-    # ========================================================================
-    # Timer Operations
-    # ========================================================================
-
     async def log_timer(
         self, flow_id: str, step: int, timer_fire_at: datetime, timer_name: str | None = None
     ) -> None:
-        """
-        Schedule a durable timer.
+        """Schedule a durable timer.
 
-        From Dave Cheney: "Discourage the use of nil as a parameter"
-        timer_name is Optional[str] for explicit null handling.
+        timer_name is optional for explicit null handling.
         """
         self._check_connected()
 
@@ -846,13 +733,10 @@ class SqliteExecutionLog(ExecutionLog):
 
         # Notify timer processor that a new timer was scheduled
         self._timer_notify.set()
-        self._timer_notify.clear()  # Reset for next notification
+        self._timer_notify.clear()
 
     async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
-        """
-        Get all timers that have expired.
-
-        **Rust Reference**: storage/mod.rs lines 66-71 (TimerInfo struct)
+        """Get all timers that have expired.
 
         Returns TimerInfo objects with flow_id, step, fire_at, and timer_name.
         """
@@ -882,15 +766,11 @@ class SqliteExecutionLog(ExecutionLog):
         ]
 
     async def claim_timer(self, flow_id: str, step: int) -> bool:
-        """
-        Claim an expired timer (optimistic concurrency).
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 815-858
+        """Claim an expired timer (optimistic concurrency).
 
         Uses UPDATE with WHERE status check for optimistic concurrency control.
         Multiple workers can safely call this - only one will succeed.
 
-        From Dave Cheney: "Design APIs that are hard to misuse"
         Returns bool (True = claimed, False = already claimed).
 
         Args:
@@ -921,19 +801,14 @@ class SqliteExecutionLog(ExecutionLog):
 
         claimed = cursor.rowcount > 0
 
-        # Notify timer processor that timer was claimed (may need to recalculate next wake time)
         if claimed:
             self._timer_notify.set()
-            self._timer_notify.clear()  # Reset for next notification
+            self._timer_notify.clear()
 
-        # True if we updated (claimed), False otherwise
         return claimed
 
     async def resume_flow(self, flow_id: str) -> bool:
-        """
-        Resume a suspended flow by changing status SUSPENDED → PENDING.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 1099-1132
+        """Resume a suspended flow by changing status SUSPENDED → PENDING.
 
         This method atomically:
         1. Checks if flow is SUSPENDED
@@ -951,9 +826,6 @@ class SqliteExecutionLog(ExecutionLog):
 
         now_millis = int(datetime.now().timestamp() * 1000)
 
-        # UPDATE flow_queue SET status = 'PENDING', locked_by = NULL
-        # WHERE id = ? AND status = 'SUSPENDED'
-        # **Rust Reference**: lines 1103-1114
         cursor = await self._connection.execute(
             """
             UPDATE flow_queue
@@ -968,23 +840,15 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-        # Return false if no rows affected (flow not in SUSPENDED state)
-        # **Rust Reference**: lines 1118-1124
         if cursor.rowcount == 0:
             return False
 
-        # Wake up one waiting worker since we just made a flow available
-        # **Rust Reference**: line 1129
         self._work_notify.set()
-        # NOTE: Don't clear here! Worker clears after waking up.
 
         return True
 
     async def get_invocations_for_flow(self, flow_id: str) -> list[Invocation]:
-        """
-        Get all execution_log (steps) for a specific flow.
-
-        **Rust Reference**: `src/storage/mod.rs` lines 164-172
+        """Get all execution_log (steps) for a specific flow.
 
         Args:
             flow_id: Flow identifier
@@ -994,7 +858,6 @@ class SqliteExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
-        # Matches Rust query (sqlite.rs:467-483)
         cursor = await self._connection.execute(
             """
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
@@ -1011,18 +874,13 @@ class SqliteExecutionLog(ExecutionLog):
         return [self._row_to_invocation(row) for row in rows]
 
     async def get_next_timer_fire_time(self) -> datetime | None:
-        """
-        Get the earliest timer fire time across all flows.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 844-863
+        """Get the earliest timer fire time across all flows.
 
         Returns:
             datetime of next timer, or None if no timers pending
         """
         self._check_connected()
 
-        # SELECT MIN(timer_fire_at) FROM execution_log
-        # WHERE status = 'WAITING_FOR_TIMER' AND timer_fire_at IS NOT NULL
         cursor = await self._connection.execute(
             """
             SELECT MIN(timer_fire_at) as next_fire_time
@@ -1043,12 +901,9 @@ class SqliteExecutionLog(ExecutionLog):
     async def store_suspension_result(
         self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
-        """
-        Store the result of a suspended invocation for later retrieval.
+        """Store the result of a suspended invocation for later retrieval.
 
-        **Rust Reference**: `src/storage/sqlite.rs` lines 913-940
-
-        This is used when a flow suspends waiting for external signal or child flow.
+        Used when a flow suspends waiting for external signal or child flow.
         The result is stored in the suspension_params table.
 
         Args:
@@ -1077,10 +932,7 @@ class SqliteExecutionLog(ExecutionLog):
     async def get_suspension_result(
         self, flow_id: str, step: int, suspension_key: str
     ) -> bytes | None:
-        """
-        Get the stored result of a suspended invocation.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 942-958
+        """Get the stored result of a suspended invocation.
 
         Args:
             flow_id: Flow identifier
@@ -1109,10 +961,7 @@ class SqliteExecutionLog(ExecutionLog):
         return None
 
     async def remove_suspension_result(self, flow_id: str, step: int, suspension_key: str) -> None:
-        """
-        Remove the stored result of a suspended invocation.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 960-981
+        """Remove the stored result of a suspended invocation.
 
         Args:
             flow_id: Flow identifier
@@ -1132,10 +981,7 @@ class SqliteExecutionLog(ExecutionLog):
         await self._connection.commit()
 
     async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
-        """
-        Mark an invocation as waiting for an external signal.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 892-911
+        """Mark an invocation as waiting for an external signal.
 
         Updates the invocation status to WAITING_FOR_SIGNAL and stores the signal name.
         Called by child flow invocation before scheduling the child.
@@ -1160,10 +1006,7 @@ class SqliteExecutionLog(ExecutionLog):
         await self._connection.commit()
 
     async def get_waiting_signals(self) -> list[SignalInfo]:
-        """
-        Get all flows waiting for external signals.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 1013-1045
+        """Get all flows waiting for external signals.
 
         Returns flows where:
         - execution_log.status = 'WAITING_FOR_SIGNAL'
@@ -1172,7 +1015,6 @@ class SqliteExecutionLog(ExecutionLog):
         Returns:
             List of SignalInfo with flow_id, step, signal_name
         """
-
         self._check_connected()
 
         cursor = await self._connection.execute("""
@@ -1197,10 +1039,7 @@ class SqliteExecutionLog(ExecutionLog):
         return signals
 
     async def update_is_retryable(self, flow_id: str, step: int, is_retryable: bool) -> None:
-        """
-        Update the is_retryable flag for a specific step invocation.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 551-569
+        """Update the is_retryable flag for a specific step invocation.
 
         Args:
             flow_id: Flow identifier
@@ -1219,17 +1058,9 @@ class SqliteExecutionLog(ExecutionLog):
         )
         await self._connection.commit()
 
-    # ========================================================================
-    # Utility Operations
-    # ========================================================================
-
     async def reset(self) -> None:
-        """
-        Clear all data (for testing/demos).
+        """Clear all data (for testing/demos).
 
-        **Rust Reference**: `src/storage/sqlite.rs` lines 571-585
-
-        From Dave Cheney: "Make the zero value useful"
         After reset, storage is empty but functional.
         """
         self._check_connected()
@@ -1240,25 +1071,16 @@ class SqliteExecutionLog(ExecutionLog):
         await self._connection.commit()
 
     async def close(self) -> None:
-        """
-        Close storage connections.
+        """Close storage connections.
 
-        From Dave Cheney: "Never start a goroutine without knowing when it will stop"
         Explicit resource cleanup, not relying on GC.
         """
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
 
-    # ========================================================================
-    # Notification Protocol Methods
-    # ========================================================================
-
     def work_notify(self) -> asyncio.Event:
-        """
-        Return event for work notifications (WorkNotificationSource protocol).
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 741-744
+        """Return event for work notifications (WorkNotificationSource protocol).
 
         Workers wait on this event to be notified when work becomes available,
         instead of polling with sleep().
@@ -1269,10 +1091,7 @@ class SqliteExecutionLog(ExecutionLog):
         return self._work_notify
 
     def timer_notify(self) -> asyncio.Event:
-        """
-        Return event for timer notifications (TimerNotificationSource protocol).
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 746-749
+        """Return event for timer notifications (TimerNotificationSource protocol).
 
         Timer processors wait on this event to be notified when timer state changes,
         instead of polling every N seconds.
@@ -1283,10 +1102,7 @@ class SqliteExecutionLog(ExecutionLog):
         return self._timer_notify
 
     def status_notify(self) -> asyncio.Event:
-        """
-        Return event for flow status change notifications.
-
-        **Rust Reference**: `src/storage/sqlite.rs` lines 1129-1131
+        """Return event for flow status change notifications.
 
         Callers can use this to wait for flow status changes (completion, failure, etc.)
         instead of polling. The notification is triggered whenever any flow status changes.
@@ -1296,25 +1112,16 @@ class SqliteExecutionLog(ExecutionLog):
         """
         return self._status_notify
 
-    # ========================================================================
-    # Helper Methods
-    # ========================================================================
-
     def _check_connected(self) -> None:
-        """
-        Guard clause: Ensure connection is open.
+        """Guard clause: Ensure connection is open.
 
-        From Dave Cheney: "Return early rather than nesting deeply"
         Check precondition at method start, not nested in try/catch.
         """
         if self._connection is None:
             raise StorageError("Not connected. Call connect() first.")
 
     def _row_to_invocation(self, row: tuple) -> Invocation:
-        """
-        Convert database row to Invocation object.
-
-        **Rust Reference**: row_to_invocation (sqlite.rs:280-329)
+        """Convert database row to Invocation object.
 
         Row format (matches SELECT query):
         0:id, 1:step, 2:timestamp, 3:class_name, 4:method_name, 5:status,

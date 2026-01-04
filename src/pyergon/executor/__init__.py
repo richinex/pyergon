@@ -1,22 +1,16 @@
-"""
-Executor module - Runtime engine for durable workflows.
+"""Runtime engine for durable workflows.
 
-This module contains the execution components:
-- executor: Direct flow execution (Executor class)
-- outcome: FlowOutcome state machine (Completed/Suspended)
-- timer: Durable timer scheduling with Observer pattern
-- signal: External signal handling
-- dag: DAG-based parallel step execution
+Components:
+- Executor: Direct flow execution with replay and caching
+- FlowOutcome: State machine for flow completion and suspension
+- Timer: Durable timer scheduling that survives restarts
+- Signal: External event handling and flow resumption
+- DAG: Parallel step execution with dependency tracking
 
-From Dave Cheney: "Package Design"
-Package name "executor" describes what it provides (execution engine),
-not what it contains (executors, timers).
-
-Note: Scheduler and Worker have been moved to top-level ergon module
-following Dave Cheney's naming advice:
-- pyergon.Executor (not pyergon.FlowExecutor)
-- pyergon.Scheduler (not pyergon.FlowScheduler)
-- pyergon.Worker (not pyergon.FlowWorker)
+Design: Package Naming
+Package name describes what it provides (execution engine)
+rather than implementation details. Public classes use simple
+names (Executor, Scheduler, Worker) without redundant prefixes.
 """
 
 from pyergon.executor.child_completion import complete_child_flow

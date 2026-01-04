@@ -1,65 +1,55 @@
-"""
-DAG Runtime Execution - Python equivalent of Rust dag! macro
+"""DAG runtime execution for automatic parallel step execution.
 
-This module provides runtime DAG execution that mimics the Rust `dag!` macro behavior.
+Provides runtime DAG execution using method introspection to discover
+steps decorated with @step and build the dependency graph automatically.
 
-**Rust Reference**: ergon_macros/src/flow.rs (dag! macro)
+Usage:
+    ```python
+    @flow
+    class MyFlow:
+        @step
+        async def step_a(self) -> int:
+            return 10
 
-Unlike Rust which uses compile-time macros to generate register_*() methods,
-Python does runtime introspection to discover steps and build the dependency graph.
+        @step(depends_on=["step_a"], inputs={'a': 'step_a'})
+        async def step_b(self, a: int) -> int:
+            return a * 2
 
-**Usage**:
-```python
-@flow
-class MyFlow:
+        async def run(self) -> int:
+            return await dag(self)
+    ```
+
+The dag() function:
+1. Discovers all @step methods
+2. Builds dependency graph from depends_on metadata
+3. Executes in topological order
+4. Auto-wires inputs based on step return values
+5. Returns the result of the last step
+
+Concurrency vs Parallelism:
+DAG uses asyncio.gather() for concurrent execution. This provides
+concurrency (interleaved execution), not true parallelism. Steps
+must be non-blocking:
+
+- Good: await asyncio.sleep(), await http_client.get(), await db.query()
+- Bad: time.sleep(), CPU-intensive loops, blocking I/O
+
+For blocking operations, explicitly offload to threads:
+
+    ```python
     @step
-    async def step_a(self) -> int:
-        return 10
+    async def cpu_intensive(self) -> int:
+        result = await asyncio.to_thread(
+            self._blocking_computation,
+            arg1, arg2
+        )
+        return result
 
-    @step(depends_on=["step_a"], inputs={'a': 'step_a'})
-    async def step_b(self, a: int) -> int:
-        return a * 2
-
-    async def run(self) -> int:
-        return await dag(self)
-```
-
-The `dag()` function will:
-1. Discover all @step methods
-2. Build dependency graph from depends_on metadata
-3. Execute in topological order
-4. Auto-wire inputs based on step return values
-5. Return the result of the last step
-
-**Handling Blocking Operations**:
-
-DAG uses `asyncio.gather()` for parallel execution. This provides CONCURRENCY
-(interleaved execution), not true parallelism. Steps must be non-blocking:
-
-✅ GOOD: `await asyncio.sleep()`, `await http_client.get()`, `await db.query()`
-❌ BAD:  `time.sleep()`, CPU-intensive loops, blocking I/O
-
-For blocking operations, users MUST explicitly offload to threads:
-
-```python
-@step
-async def cpu_intensive(self) -> int:
-    # User's responsibility to offload blocking work
-    result = await asyncio.to_thread(
-        self._blocking_computation,
-        arg1, arg2
-    )
-    return result
-
-def _blocking_computation(self, arg1, arg2):
-    # Blocking work is safe here (runs in thread pool)
-    time.sleep(1.0)  # OK
-    return heavy_computation()
-```
-
-**Rust Equivalent**: `tokio::task::spawn_blocking()`
-
-See `examples/dag_blocking_ops.py` for detailed examples.
+    def _blocking_computation(self, arg1, arg2):
+        # Blocking work is safe here (runs in thread pool)
+        time.sleep(1.0)
+        return heavy_computation()
+    ```
 """
 
 import asyncio
@@ -74,15 +64,10 @@ class DagExecutionError(Exception):
 
 
 async def dag(flow: Any, final_step: str | None = None) -> Any:
-    """
-    Execute a flow's steps as a DAG based on dependency metadata.
+    """Execute a flow's steps as a DAG based on dependency metadata.
 
-    This is the Python runtime equivalent of Rust's `dag!` macro.
-
-    **Rust Reference**: ergon_macros/src/flow.rs
-
-    **Parallel Execution**: Independent steps at the same dependency level
-    are executed concurrently using asyncio.gather().
+    Independent steps at the same dependency level are executed
+    concurrently using asyncio.gather().
 
     Args:
         flow: Flow instance with @step decorated methods
@@ -182,8 +167,7 @@ async def dag(flow: Any, final_step: str | None = None) -> Any:
 
 
 def _discover_steps(flow: Any) -> list[str]:
-    """
-    Discover all @step decorated methods in a flow.
+    """Discover all @step decorated methods in a flow.
 
     Args:
         flow: Flow instance
@@ -208,22 +192,17 @@ def _discover_steps(flow: Any) -> list[str]:
 
 
 def _build_dependency_graph(flow: Any, steps: list[str]) -> dict[str, list[str]]:
-    """
-    Build dependency graph from @step metadata.
+    """Build dependency graph from @step metadata.
 
     Args:
         flow: Flow instance
         steps: List of step names
 
     Returns:
-        Dict mapping step_name -> list of steps it depends on
+        Dict mapping step_name to list of steps it depends on
 
     Example:
-        {
-            'step_a': [],
-            'step_b': ['step_a'],
-            'step_c': ['step_a', 'step_b']
-        }
+        {'step_a': [], 'step_b': ['step_a'], 'step_c': ['step_a', 'step_b']}
     """
     graph: dict[str, list[str]] = {}
 
@@ -249,11 +228,10 @@ def _build_dependency_graph(flow: Any, steps: list[str]) -> dict[str, list[str]]
 
 
 def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
-    """
-    Topological sort of dependency graph using Kahn's algorithm.
+    """Topological sort of dependency graph using Kahn's algorithm.
 
     Args:
-        graph: Dependency graph (step -> dependencies)
+        graph: Dependency graph mapping step to dependencies
 
     Returns:
         List of steps in execution order
@@ -261,8 +239,8 @@ def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
     Raises:
         DagExecutionError: If graph has cycles
 
-    **Algorithm**: Kahn's algorithm
-    1. Find all nodes with no incoming edges (no dependencies)
+    Algorithm (Kahn's):
+    1. Find nodes with no incoming edges (no dependencies)
     2. Remove them and their outgoing edges
     3. Repeat until graph is empty
     4. If graph still has edges, there's a cycle
@@ -302,28 +280,19 @@ def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
 
 
 def _group_by_level(graph: dict[str, list[str]]) -> list[list[str]]:
-    """
-    Group steps by dependency level for parallel execution.
+    """Group steps by dependency level for parallel execution.
 
-    Steps at the same level have no dependencies on each other and can
-    execute in parallel.
+    Steps at the same level have no dependencies on each other
+    and can execute in parallel.
 
     Args:
-        graph: Dependency graph (step -> dependencies)
+        graph: Dependency graph mapping step to dependencies
 
     Returns:
-        List of levels, where each level is a list of steps that can
-        execute in parallel.
+        List of levels, each containing steps that can execute in parallel
 
     Example:
-        graph = {
-            'a': [],
-            'b': [],
-            'c': ['a'],
-            'd': ['a', 'b'],
-            'e': ['c', 'd']
-        }
-
+        graph = {'a': [], 'b': [], 'c': ['a'], 'd': ['a', 'b'], 'e': ['c', 'd']}
         Returns: [['a', 'b'], ['c', 'd'], ['e']]
         - Level 0: a, b (no dependencies)
         - Level 1: c (depends on a), d (depends on a, b)
@@ -333,7 +302,7 @@ def _group_by_level(graph: dict[str, list[str]]) -> list[list[str]]:
     levels_map: dict[str, int] = {}
 
     def calculate_level(step: str) -> int:
-        """Calculate the level of a step (max depth from root)."""
+        """Calculate the level of a step - max depth from root."""
         if step in levels_map:
             return levels_map[step]
 
