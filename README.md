@@ -1,4 +1,4 @@
-# Ergon - Durable Execution Framework for Python
+# PyErgon - Durable Execution Framework for Python
 
 Pure Python implementation of durable execution with Temporal-like semantics.
 
@@ -8,12 +8,11 @@ Pure Python implementation of durable execution with Temporal-like semantics.
 - **Durable Timers**: Timers survive process restarts
 - **Distributed Workers**: Multiple workers process flows in parallel
 - **Work Stealing**: Fair load distribution across workers
-- **Storage Backends**: SQLite and in-memory implementations
-- **Pure Python**: No Rust/PyO3 dependencies, just aiosqlite
+- **Storage Backends**: SQLite, Redis, and in-memory implementations
 
 ## Design Philosophy
 
-Ergon follows practical software engineering principles:
+PyErgon follows practical software engineering principles:
 
 - Simple, readable code over clever abstractions
 - Clear naming without cryptic abbreviations
@@ -139,54 +138,28 @@ async def main():
 asyncio.run(main())
 ```
 
-## Project Structure
-
-```
-pyergon/
-├── src/ergon/              # Pure Python implementation
-│   ├── core/              # Core types (Invocation, Status, Context)
-│   ├── storage/           # Storage backends (SQLite, Memory, Redis)
-│   ├── executor/          # Execution engine (Scheduler, Worker, Timer, Signal)
-│   ├── decorators.py      # @flow, @flow_type, and @step decorators
-│   └── __init__.py        # Public API
-│
-├── examples/               # Example workflows
-│   ├── simple_timer_sqlite.py
-│   ├── complex_multi_worker_load_sqlite.py
-│   └── dag_limit_parallel.py
-│
-├── tests/                  # Test suite (60 tests, 48% coverage)
-│   ├── test_basic.py
-│   ├── test_properties.py
-│   ├── test_durability.py
-│   ├── test_concurrency.py
-│   └── ...
-│
-└── pyproject.toml          # Project configuration
-```
-
 ## Architecture
 
 ### Core Components
 
-1. **Core Types** (`ergon.core`)
+1. **Core Types** (`pyergon.core`)
    - `Invocation`: Single step execution record
    - `InvocationStatus`: Step state machine
    - `ScheduledFlow`: Distributed queue item
 
-2. **Storage Layer** (`ergon.storage`)
+2. **Storage Layer** (`pyergon.storage`)
    - `ExecutionLog`: Abstract protocol for persistence
    - `SqliteExecutionLog`: SQLite backend
    - `InMemoryExecutionLog`: In-memory backend for testing
 
-3. **Executor** (`ergon.executor`)
+3. **Executor** (`pyergon.executor`)
    - `Executor`: Execute flows with durable context
    - `Scheduler`: Enqueue flows for distributed processing
    - `Worker`: Process flows from queue
    - `schedule_timer`: Durable timers
    - `await_external_signal`: External event coordination
 
-4. **Decorators** (`ergon.decorators`)
+4. **Decorators** (`pyergon.decorators`)
    - `@flow_type`: Mark workflow class
    - `@flow`: Mark flow entry point method
    - `@step`: Mark durable step method
@@ -212,10 +185,10 @@ uv run pytest tests/
 uv run pytest tests/test_durability.py -v
 
 # Type checking
-mypy src/ergon/
+mypy src/pyergon/
 
 # Linting
-ruff check src/ergon/
+ruff check src/pyergon/
 ```
 
 ## Development
@@ -228,12 +201,6 @@ ruff check src/ergon/
 - Example usage in every module
 - Test coverage with property-based testing
 
-## Project Stats
-
-- 2,400+ lines of pure Python
-- 60 tests passing across 8 test files
-- 48% code coverage
-- Zero external compiled dependencies
 
 ## License
 
