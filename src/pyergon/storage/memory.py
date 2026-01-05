@@ -87,6 +87,9 @@ class InMemoryExecutionLog(ExecutionLog):
 
             # Check if invocation already exists and skip if Complete,
             # WaitingForSignal, or WaitingForTimer
+            attempts = 1
+            inv_id = str(uuid7())
+
             if key in self._invocations:
                 existing = self._invocations[key]
                 if existing.status == InvocationStatus.COMPLETE:
@@ -99,9 +102,12 @@ class InMemoryExecutionLog(ExecutionLog):
                     # Don't overwrite timer state during replay
                     return existing
 
+                # Retrying a failed/pending invocation - increment attempts
+                attempts = existing.attempts + 1
+                inv_id = existing.id
+
             # Create new invocation (or overwrite non-Complete/non-WaitingForSignal)
             now = datetime.now()
-            inv_id = str(uuid7())
 
             invocation = Invocation(
                 id=inv_id,
@@ -111,7 +117,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 class_name=class_name,
                 method_name=method_name,
                 status=InvocationStatus.PENDING,
-                attempts=0,
+                attempts=attempts,
                 parameters=parameters,
                 params_hash=params_hash,
                 return_value=None,
@@ -182,7 +188,7 @@ class InMemoryExecutionLog(ExecutionLog):
         """Check if flow has non-retryable error."""
         async with self._lock:
             for (fid, _), inv in self._invocations.items():
-                if fid == flow_id and not inv.is_retryable:
+                if fid == flow_id and inv.is_retryable is False:
                     return True
             return False
 
@@ -423,12 +429,7 @@ class InMemoryExecutionLog(ExecutionLog):
                     )
             return expired
 
-    async def claim_timer(
-        self,
-        flow_id: str,
-        step: int,
-        worker_id: str,  # noqa: ARG002 - Required by protocol signature
-    ) -> bool:
+    async def claim_timer(self, flow_id: str, step: int) -> bool:
         """Claim an expired timer (optimistic concurrency)."""
         async with self._lock:
             key = (flow_id, step)

@@ -141,10 +141,24 @@ class RedisExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
+        # Check if invocation already exists
+        existing = await self.get_invocation(flow_id, step)
+        if existing is not None:
+            if existing.status == InvocationStatus.COMPLETE:
+                # Don't overwrite cached results during replay
+                return existing
+            if existing.status == InvocationStatus.WAITING_FOR_SIGNAL:
+                # Don't overwrite signal state during replay
+                return existing
+            if existing.status == InvocationStatus.WAITING_FOR_TIMER:
+                # Don't overwrite timer state during replay
+                return existing
+
         now = datetime.now(UTC)
         now_ts = int(now.timestamp())
         inv_key = self._invocation_key(flow_id, step)
-        inv_id = str(uuid7())
+        inv_id = existing.id if existing else str(uuid7())
+        attempts = existing.attempts + 1 if existing else 1
 
         # Atomic pipeline: store invocation + add to invocations list
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -156,7 +170,7 @@ class RedisExecutionLog(ExecutionLog):
             await pipe.hset(inv_key, "parameters", parameters)
             await pipe.hset(inv_key, "params_hash", str(params_hash))
             await pipe.hset(inv_key, "status", InvocationStatus.PENDING.value)
-            await pipe.hset(inv_key, "attempts", "0")
+            await pipe.hset(inv_key, "attempts", str(attempts))
             await pipe.hset(inv_key, "created_at", now_ts)
             await pipe.hset(inv_key, "updated_at", now_ts)
             await pipe.hset(inv_key, "is_retryable", "1")  # Default: retryable
@@ -169,8 +183,9 @@ class RedisExecutionLog(ExecutionLog):
 
                 await pipe.hset(inv_key, "retry_policy", pickle.dumps(retry_policy))
 
-            # Add to invocations list
-            await pipe.lpush(self._invocations_key(flow_id), inv_key)
+            # Add to invocations list (only if new invocation)
+            if existing is None:
+                await pipe.lpush(self._invocations_key(flow_id), inv_key)
 
             await pipe.execute()
 
@@ -182,7 +197,7 @@ class RedisExecutionLog(ExecutionLog):
             class_name=class_name,
             method_name=method_name,
             status=InvocationStatus.PENDING,
-            attempts=0,
+            attempts=attempts,
             parameters=parameters,
             params_hash=params_hash,
             return_value=None,
@@ -527,7 +542,7 @@ class RedisExecutionLog(ExecutionLog):
 
         return timers
 
-    async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
+    async def claim_timer(self, flow_id: str, step: int) -> bool:
         """Atomically claim a timer.
 
         Uses Lua script for atomic check-and-update.

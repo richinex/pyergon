@@ -73,8 +73,11 @@ async def await_external_signal(signal_name: str) -> bytes:
         # Check if signal has arrived while we were waiting
         params = await ctx.storage.get_suspension_result(ctx.flow_id, current_step, signal_name)
         if params:
-            # Signal arrived! Complete the step and return
-            await ctx.storage.log_invocation_completion(ctx.flow_id, current_step, params)
+            # Signal arrived! Return the data.
+            # DO NOT mark invocation as complete here - let the step decorator do it!
+            # The step might return an error after reading the signal,
+            # and we don't want to cache it as Complete if it fails.
+            # Clean up signal params so they aren't re-delivered on retry
             await ctx.storage.remove_suspension_result(ctx.flow_id, current_step, signal_name)
             return params
 

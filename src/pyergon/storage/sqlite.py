@@ -272,7 +272,11 @@ class SqliteExecutionLog(ExecutionLog):
                 parameters, params_hash, retry_policy
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, step)
-            DO UPDATE SET attempts = attempts + 1
+            DO UPDATE SET
+                attempts = attempts + 1,
+                params_hash = excluded.params_hash,
+                parameters = excluded.parameters,
+                timestamp = excluded.timestamp
         """,
             (
                 invocation_id,
@@ -881,6 +885,7 @@ class SqliteExecutionLog(ExecutionLog):
         """
         self._check_connected()
 
+        # Don't use self._lock for read-only operations - WAL mode allows concurrent reads
         cursor = await self._connection.execute(
             """
             SELECT MIN(timer_fire_at) as next_fire_time

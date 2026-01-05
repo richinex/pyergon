@@ -290,8 +290,21 @@ class ExecutionLog(ABC):
         """
         pass
 
+    async def move_ready_delayed_tasks(self) -> int:
+        """Move delayed tasks that are ready to execute to the ready queue.
+
+        This is a maintenance operation for distributed backends (e.g., Redis)
+        that use separate queues for delayed tasks. For local backends (in-memory,
+        SQLite), this is a no-op since delayed tasks are already in the queue
+        and filtered at dequeue time based on scheduled_for timestamp.
+
+        Returns:
+            Number of tasks moved to ready queue
+        """
+        return 0  # No-op by default
+
     @abstractmethod
-    async def claim_timer(self, flow_id: str, step: int, worker_id: str) -> bool:
+    async def claim_timer(self, flow_id: str, step: int) -> bool:
         """Claim an expired timer (optimistic concurrency).
 
         Returns bool instead of raising exception. False means another

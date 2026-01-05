@@ -99,7 +99,8 @@ class Registry(Generic[S]):
             except Exception as e:
                 return Completed(result=Exception(f"failed to deserialize flow: {e}"))
 
-            exec = Executor(flow=flow_instance, storage=storage, flow_id=flow_id)
+            # Convert UUID to string for Executor
+            exec = Executor(flow=flow_instance, storage=storage, flow_id=str(flow_id))
             outcome = await exec.run(lambda _: executor(flow_instance))
             return outcome
 
@@ -201,8 +202,8 @@ class Worker:
         # See: asyncio docs - "Save a reference to avoid task disappearing mid-execution"
         self._background_tasks: set[asyncio.Task] = set()
 
-        # Dequeue channel (bounded to 1 like Rust) to prevent work hogging
-        # Rust ref: worker.rs line 809-811
+        # Dequeue channel (bounded to 1) to prevent work hogging
+        # Worker must consume before next dequeue happens
         self._dequeue_queue: asyncio.Queue[ScheduledFlow | None] = asyncio.Queue(maxsize=1)
         self._dequeue_task: asyncio.Task | None = None
 
@@ -331,7 +332,6 @@ class Worker:
     async def _background_dequeue_loop(self) -> None:
         """Background task that continuously dequeues flows and puts them in bounded queue.
 
-        Matches Rust's dedicated dequeue task (worker.rs lines 830-878).
         Uses bounded queue (maxsize=1) to prevent hogging - worker must consume
         before next dequeue happens.
         """
@@ -359,54 +359,146 @@ class Worker:
                 await asyncio.sleep(0.1)
 
     async def _run(self) -> None:
-        """Main worker loop with event-driven timer processing.
+        """Main worker loop using asyncio.wait with FIRST_COMPLETED (mirrors Rust tokio::select!).
 
-        Template Method Pattern - fixed algorithm skeleton with variation points.
+        Concurrently waits on multiple event sources:
+        1. Shutdown signal
+        2. Flow dequeue (from background task via bounded queue)
+        3. Timer sleep (sleeps until next timer fires)
+        4. Timer notification (wakes when new timer scheduled)
+        5. Signal processing (periodic, if enabled)
 
-        Event-Driven Design:
-        Uses asyncio.wait_for() to sleep until next timer expires OR timer_notify signals.
-
-        Loop structure:
-        1. Process signals (if enabled)
-        2. Process flows from queue (event-driven via work_notify)
-        3. If got flow, loop immediately
-        4. If no flow, wait on timer (event-driven via timer_notify)
+        Whichever completes first is handled, then loop repeats.
+        This matches Rust's tokio::select! pattern for true event-driven execution.
         """
         logger.info(f"Worker {self._worker_id} started")
 
-        # Start background dequeue task (Rust ref: worker.rs line 830)
+        # Start background dequeue task
         self._dequeue_task = asyncio.create_task(self._background_dequeue_loop())
+
+        # Track next timer wake time (like Rust)
+        next_timer_wake: datetime | None = None
 
         try:
             while self._running and not self._shutdown_event.is_set():
                 try:
                     logger.debug(f"Worker {self._worker_id}: Loop iteration starting")
 
+                    # Build list of concurrent tasks to wait on
+                    pending_tasks = {}
+
+                    # 0. Shutdown event - always wait for shutdown signal
+                    shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+                    pending_tasks["shutdown"] = shutdown_task
+
+                    # 1. Dequeue task - always wait for flows
+                    dequeue_task = asyncio.create_task(self._dequeue_queue.get())
+                    pending_tasks["dequeue"] = dequeue_task
+
+                    # 2. Maintenance: Move ready delayed tasks (for retries)
+                    delayed_task = asyncio.create_task(asyncio.sleep(1.0))  # Check every 1s
+                    pending_tasks["delayed_tasks"] = delayed_task
+
+                    # 3. Timer sleep task - if timers enabled
+                    if self._enable_timers:
+                        timer_sleep_task = asyncio.create_task(
+                            self._create_timer_sleep(next_timer_wake)
+                        )
+                        pending_tasks["timer_sleep"] = timer_sleep_task
+
+                        # 4. Timer notification - wake when new timer scheduled
+                        if self._supports_timer_notifications:
+                            timer_notify_task = asyncio.create_task(self._timer_notify.wait())
+                            pending_tasks["timer_notify"] = timer_notify_task
+
+                    # 5. Signal processing - if enabled (periodic check)
                     if self._signal_source is not None:
-                        await self._process_signals()
+                        signal_task = asyncio.create_task(asyncio.sleep(self._signal_poll_interval))
+                        pending_tasks["signal"] = signal_task
 
-                    # Try to get flow from bounded queue with timeout
-                    # This matches Rust's dequeue_rx.recv() which always awaits
-                    try:
-                        scheduled_flow = await asyncio.wait_for(
-                            self._dequeue_queue.get(),
-                            timeout=self._poll_interval if not self._enable_timers else 0.01
-                        )
-                        self._dequeue_queue.task_done()
+                    # Wait for FIRST task to complete (like tokio::select!)
+                    done, pending = await asyncio.wait(
+                        pending_tasks.values(), return_when=asyncio.FIRST_COMPLETED
+                    )
 
-                        # Execute flow in background
-                        task = asyncio.create_task(self._execute_flow(scheduled_flow))
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
+                    # Cancel all pending tasks
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
 
-                        logger.debug(
-                            f"Worker {self._worker_id} claimed flow: "
-                            f"task_id={scheduled_flow.task_id}"
-                        )
-                    except asyncio.TimeoutError:
-                        # No flow available, wait on timer if enabled
-                        if self._enable_timers:
-                            await self._wait_for_timer()
+                    # Handle the completed task
+                    for completed_task in done:
+                        # Find which task completed
+                        task_name = None
+                        for name, task in pending_tasks.items():
+                            if task == completed_task:
+                                task_name = name
+                                break
+
+                        # Check if task raised an exception
+                        try:
+                            # Get result (will raise if task failed)
+                            result = completed_task.result()
+                        except Exception as task_error:
+                            logger.error(
+                                f"Worker {self._worker_id}: Task '{task_name}' failed: {task_error}"
+                            )
+                            # Skip this iteration and try again
+                            continue
+
+                        if task_name == "shutdown":
+                            # Shutdown signal received - exit loop
+                            logger.debug(f"Worker {self._worker_id}: Shutdown signal received")
+                            break
+
+                        elif task_name == "dequeue":
+                            # Got a flow - execute it
+                            scheduled_flow = result
+                            self._dequeue_queue.task_done()
+
+                            # Execute flow in background
+                            task = asyncio.create_task(self._execute_flow(scheduled_flow))
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
+
+                            logger.debug(
+                                f"Worker {self._worker_id} claimed flow: "
+                                f"task_id={scheduled_flow.task_id}"
+                            )
+
+                        elif task_name == "delayed_tasks":
+                            # Maintenance: Move ready delayed tasks (retries) to ready queue
+                            try:
+                                count = await self._storage.move_ready_delayed_tasks()
+                                if count > 0:
+                                    logger.debug(
+                                        f"Worker {self._worker_id} moved {count} delayed tasks "
+                                        "to ready queue"
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Worker {self._worker_id} failed to move delayed tasks: {e}"
+                                )
+
+                        elif task_name == "timer_sleep":
+                            # Timer fired - process expired timers
+                            await self._process_timers()
+
+                            # Recalculate next wake time
+                            next_timer_wake = await self._calculate_next_timer_wake()
+
+                        elif task_name == "timer_notify":
+                            # Timer notification - recalculate next wake time
+                            self._timer_notify.clear()
+                            next_timer_wake = await self._calculate_next_timer_wake()
+                            logger.debug(f"Worker {self._worker_id}: Timer notification received")
+
+                        elif task_name == "signal":
+                            # Process signals
+                            await self._process_signals()
 
                 except Exception as e:
                     logger.error(f"Worker {self._worker_id} error: {e}")
@@ -418,66 +510,38 @@ class Worker:
         finally:
             logger.info(f"Worker {self._worker_id} stopped")
 
-    async def _wait_for_timer(self) -> None:
-        """Event-driven timer wait - sleeps until next timer fires OR new timer scheduled.
+    async def _create_timer_sleep(self, next_timer_wake: datetime | None) -> None:
+        """Create timer sleep future (mirrors Rust timer_sleep).
 
-        Waits on:
-        1. timer_sleep - sleeps until next_timer_wake
-        2. timer_notified - wakes when new timer is scheduled
+        If next_timer_wake is None, sleeps forever (like std::future::pending()).
+        Otherwise, sleeps until the specified time.
+        """
+        if next_timer_wake is None:
+            # No timers - sleep forever (will be cancelled when timer notification arrives)
+            # This matches Rust's std::future::pending()
+            await asyncio.sleep(float('inf'))
+        else:
+            # Calculate sleep duration
+            now = datetime.now()
+            if next_timer_wake <= now:
+                # Timer already expired - return immediately
+                return
+            else:
+                # Sleep until timer fires
+                sleep_duration = (next_timer_wake - now).total_seconds()
+                await asyncio.sleep(sleep_duration)
 
-        Uses asyncio.wait_for():
-        - Timeout = time until next timer fires
-        - Event = timer_notify (signals new timer scheduled)
+    async def _calculate_next_timer_wake(self) -> datetime | None:
+        """Calculate next timer wake time (mirrors Rust timer wake calculation).
 
-        This is more efficient than polling - worker only wakes when needed.
+        Returns:
+            datetime when next timer should fire, or None if no timers
         """
         try:
-            if self._supports_timer_notifications:
-                next_fire = await self._storage.get_next_timer_fire_time()
-
-                if next_fire is None:
-                    logger.debug(f"Worker {self._worker_id}: No timers, waiting for notification")
-                    try:
-                        await self._timer_notify.wait()
-                        self._timer_notify.clear()
-                        logger.debug(f"Worker {self._worker_id}: Timer notification received")
-                    except Exception:
-                        pass
-                    return
-
-                now = datetime.now()
-                if next_fire <= now:
-                    logger.debug(f"Worker {self._worker_id}: Timer already expired, processing")
-                    await self._process_timers()
-                    return
-
-                timeout_seconds = (next_fire - now).total_seconds()
-                logger.debug(
-                    f"Worker {self._worker_id}: "
-                    f"Waiting {timeout_seconds:.2f}s for timer or notification"
-                )
-
-                try:
-                    await asyncio.wait_for(self._timer_notify.wait(), timeout=timeout_seconds)
-                    self._timer_notify.clear()
-                    logger.debug(
-                        f"Worker {self._worker_id}: "
-                        "Woke from timer notification (new timer scheduled)"
-                    )
-                except TimeoutError:
-                    logger.debug(
-                        f"Worker {self._worker_id}: Timer expired after {timeout_seconds:.2f}s"
-                    )
-
-                await self._process_timers()
-
-            else:
-                # Polling mode fallback
-                await asyncio.sleep(self._timer_interval)
-                await self._process_timers()
-
+            return await self._storage.get_next_timer_fire_time()
         except Exception as e:
-            logger.error(f"Worker {self._worker_id} timer wait error: {e}")
+            logger.warning(f"Worker {self._worker_id}: Failed to get next timer: {e}")
+            return None
 
     async def _process_timers(self) -> None:
         """Process expired timers (HOOK for Template Method).
@@ -509,11 +573,16 @@ class Worker:
                 if claimed:
                     logger.info(f"Timer fired: flow={flow_id} step={step} name={timer_name!r}")
 
-                    payload = {
-                        "success": True,
-                        "data": b"",
-                        "is_retryable": None,
-                    }
+                    # Use SuspensionPayload dataclass
+                    # Store success=true with empty data to indicate timer fired
+                    # The step will execute and store its actual result
+                    from pyergon.executor.suspension_payload import SuspensionPayload
+
+                    payload = SuspensionPayload(
+                        success=True,
+                        data=b"",  # Empty - timer doesn't carry data, just marks delay completion
+                        is_retryable=None,
+                    )
                     result_bytes = pickle.dumps(payload)
 
                     try:
@@ -603,68 +672,6 @@ class Worker:
 
         except Exception as e:
             logger.error(f"Signal processing error: {e}")
-
-    async def _process_flow(self) -> bool:
-        """Process one flow from queue with event-driven wakeup (HOOK for Template Method).
-
-        Background dequeue task loops continuously, waiting on notification when queue is empty.
-
-        Spawns background task so worker continues polling while flow executes.
-
-        Event-Driven Design:
-        Loops until a flow is claimed. When queue is empty, waits on work_notify
-        event with timeout, then immediately tries again (no sleep).
-
-        Returns:
-            True if a flow was dequeued and spawned, False if queue is empty
-        """
-        while True:
-            try:
-                logger.debug(f"Worker {self._worker_id}: Attempting to dequeue flow")
-                scheduled_flow = await self._storage.dequeue_flow(self._worker_id)
-
-                if scheduled_flow is None:
-                    logger.debug(f"Worker {self._worker_id}: Queue empty, waiting for notification")
-                    if self._supports_work_notifications:
-                        # Event-driven: wait for notification with timeout
-                        # Wakes immediately when work is enqueued (fast path)
-                        # or after poll_interval + jitter (slow path/safety net)
-                        # Jitter prevents thundering herd
-                        try:
-                            await asyncio.wait_for(
-                                self._work_notify.wait(), timeout=self._poll_interval_with_jitter
-                            )
-                            self._work_notify.clear()
-                            logger.debug(
-                                f"Worker {self._worker_id}: "
-                                "Woke from notification, retrying dequeue"
-                            )
-                            continue
-                        except TimeoutError:
-                            logger.debug(
-                                f"Worker {self._worker_id}: Notification timeout, no flow found"
-                            )
-                            return False
-                    return False
-
-                # Create background task with strong reference to prevent GC
-                # asyncio docs: "Save a reference to avoid task disappearing mid-execution"
-                task = asyncio.create_task(self._execute_flow(scheduled_flow))
-                self._background_tasks.add(task)
-                # Auto-cleanup when task completes
-                task.add_done_callback(self._background_tasks.discard)
-
-                logger.debug(
-                    f"Worker {self._worker_id} claimed flow: "
-                    f"task_id={scheduled_flow.task_id}, "
-                    f"flow_type={scheduled_flow.flow_type}"
-                )
-
-                return True
-
-            except Exception as e:
-                logger.error(f"Flow dequeue error: {e}")
-                return False
 
     async def _execute_flow(self, scheduled_flow: ScheduledFlow) -> None:
         """Execute a flow using registry and handle FlowOutcome.

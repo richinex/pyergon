@@ -127,27 +127,20 @@ class Context:
         # Python GIL makes simple int increment atomic (BEST_PRACTICES.md)
         self._step_counter = -1
 
-        # Enclosing step - tracks parent step for invoke() coordination (Rust line 64)
+        # Enclosing step - tracks parent step for invoke() coordination
         self._enclosing_step = -1  # -1 means no enclosing step
 
         # Suspension tracking (in-memory only, not persisted)
-        # From Rust: suspend_reason: Mutex<Option<SuspendReason>>
-        # Python equivalent: threading.Lock protecting Optional[SuspendReason]
+        # Uses threading.Lock to protect Optional[SuspendReason]
         # Reference: https://docs.python.org/3/library/threading.html#lock-objects
         self._suspend_reason: SuspendReason | None = None
         self._suspend_lock = Lock()
 
     def next_step(self) -> int:
-        """
-        Get next step number (atomic increment).
+        """Get next step number (atomic increment).
 
         This method increments the step counter atomically and returns
         the new value. Thread-safe for concurrent access.
-
-        From Rust:
-            pub fn next_step(&self) -> i32 {
-                self.step_counter.fetch_add(1, Ordering::SeqCst) + 1
-            }
 
         Returns:
             Next step number (0-indexed)
@@ -161,13 +154,7 @@ class Context:
         return self._step_counter
 
     def current_step(self) -> int:
-        """
-        Get current step number without incrementing.
-
-        From Rust:
-            pub fn current_step(&self) -> i32 {
-                self.step_counter.load(Ordering::SeqCst)
-            }
+        """Get current step number without incrementing.
 
         Returns:
             Current step number
@@ -187,25 +174,19 @@ class Context:
         return self._step_counter
 
     def set_enclosing_step(self, step: int) -> None:
-        """
-        Set the current enclosing step.
+        """Set the current enclosing step.
 
-        **Rust Reference**: set_enclosing_step (context.rs:477-480)
-
-        Called by #[step] macro to tell invoke().result() which parent step is executing.
+        Called by @step decorator to tell invoke().result() which parent step is executing.
 
         No lock needed - GIL protects simple int assignment in async context.
         """
         self._enclosing_step = step
 
     def get_enclosing_step(self) -> int | None:
-        """
-        Get the current enclosing step, if any.
-
-        **Rust Reference**: get_enclosing_step (context.rs:486-495)
+        """Get the current enclosing step, if any.
 
         Returns:
-            Step number if a #[step] wrapper is active, None if at top level
+            Step number if a @step wrapper is active, None if at top level
 
         No lock needed - GIL protects simple int read in async context.
         """
@@ -222,13 +203,9 @@ class Context:
         delay: int | None = None,
         retry_policy: Any | None = None,
     ) -> None:
-        """
-        Log step execution start to storage.
+        """Log step execution start to storage.
 
         Creates an Invocation record with status=PENDING.
-
-        From Rust:
-            pub async fn log_step_start(&self, params: LogStepStartParams) -> Result<()>
 
         Args:
             step: Step number
@@ -253,15 +230,9 @@ class Context:
     async def log_step_completion(
         self, step: int, return_value: bytes, is_retryable: bool | None = None
     ) -> Invocation:
-        """
-        Log step execution completion to storage.
+        """Log step execution completion to storage.
 
         Updates Invocation record with status=COMPLETE and return_value.
-
-        From Rust:
-            pub async fn log_step_completion(
-                &self, step: i32, return_value: &[u8]
-            ) -> Result<Invocation>
 
         Args:
             step: Step number
@@ -286,17 +257,11 @@ class Context:
     async def get_cached_result(
         self, step: int, class_name: str, method_name: str, params_hash: int
     ) -> Any:
-        """
-        Get cached result for a step if it exists.
+        """Get cached result for a step if it exists.
 
         Checks if a step with the same parameters has already been executed.
         Returns _CACHE_MISS sentinel if not cached, otherwise returns deserialized result
         (which may be None).
-
-        From Rust:
-            pub async fn get_cached_result<R>(...) -> Result<Option<R>>
-            - Ok(Some(value)) -> cache hit, return value (can be None)
-            - Ok(None) -> cache miss, return _CACHE_MISS sentinel
 
         Args:
             step: Step number
@@ -310,18 +275,17 @@ class Context:
 
         Note: If result is a cached exception, it will be raised, not returned.
         """
+        from pyergon.executor.suspension_payload import SuspensionPayload
+        from pyergon.models import InvocationStatus
+
         invocation = await self.storage.get_invocation(flow_id=self.flow_id, step=step)
 
         if invocation is None:
             return _CACHE_MISS
 
-        if not invocation.is_complete:
-            return _CACHE_MISS
-
-        # Check if parameters match (non-determinism detection)
+        # Validate invocation matches current execution (non-determinism detection)
         if invocation.params_hash != params_hash:
             # Parameters changed - this is non-deterministic behavior
-            # Rust would panic here, Python raises exception
             raise RuntimeError(
                 f"Non-deterministic behavior detected: "
                 f"Step {step} ({method_name}) called with different parameters. "
@@ -329,29 +293,97 @@ class Context:
                 f"This indicates the workflow is non-deterministic."
             )
 
-        # Deserialize and return cached result
-        if invocation.return_value is None:
-            return _CACHE_MISS
+        # Return cached result if step is complete
+        if invocation.status == InvocationStatus.COMPLETE:
+            if invocation.return_value is None:
+                return _CACHE_MISS
 
-        try:
-            result = pickle.loads(invocation.return_value)
+            # Defensive: Check if return_value is empty
+            if len(invocation.return_value) == 0:
+                return _CACHE_MISS
 
-            # If result is an exception, raise it (replay error)
-            if isinstance(result, Exception):
-                raise result
+            try:
+                result = pickle.loads(invocation.return_value)
 
-            return result
-        except Exception:
-            # If deserialization fails, treat as no cache
-            return _CACHE_MISS
+                # If result is an exception, raise it (replay error)
+                if isinstance(result, Exception):
+                    raise result
+
+                return result
+            except Exception:
+                # If deserialization fails, treat as no cache
+                return _CACHE_MISS
+
+        # Check if step is waiting for a signal (child flow completion)
+        elif invocation.status == InvocationStatus.WAITING_FOR_SIGNAL:
+            # Check if signal result is available (child flow completed)
+            # This prevents re-executing step bodies when replaying flows with child invocations
+            signal_name = invocation.timer_name or ""
+
+            suspension_result = await self.storage.get_suspension_result(
+                self.flow_id, step, signal_name
+            )
+
+            if suspension_result is not None:
+                # Deserialize the suspension payload to get the result
+                try:
+                    payload = pickle.loads(suspension_result)
+                    if isinstance(payload, dict):
+                        # Handle dict-based SuspensionPayload
+                        if payload.get("success", False):
+                            # Return the successful result from the child
+                            result = pickle.loads(payload["data"])
+                            return result
+                    elif isinstance(payload, SuspensionPayload):
+                        # Handle dataclass-based SuspensionPayload
+                        if payload.success:
+                            result = pickle.loads(payload.data)
+                            return result
+                except Exception:
+                    # Failed to deserialize signal payload
+                    pass
+
+        # Check if step is waiting for a timer
+        elif invocation.status == InvocationStatus.WAITING_FOR_TIMER:
+            # Timer suspension handling (similar to signals, but with empty data)
+            # Check if timer has fired (SuspensionPayload with empty data)
+            # Unlike signals (which carry the actual step result in payload.data),
+            # timers only mark that the delay has passed (payload.data is empty)
+            # The step needs to execute to produce its actual return value
+
+            timer_key = invocation.timer_name or ""
+            timer_result = await self.storage.get_suspension_result(self.flow_id, step, timer_key)
+
+            if timer_result is not None:
+                # Timer has fired - verify it's a valid SuspensionPayload
+                try:
+                    payload = pickle.loads(timer_result)
+                    if isinstance(payload, dict):
+                        # Handle dict-based payload
+                        if payload.get("success", False):
+                            # Timer fired successfully, but don't return cached result
+                            # Let the step execute to produce its actual return value
+                            # The schedule_timer() call will handle cleanup
+                            pass
+                    elif isinstance(payload, SuspensionPayload):
+                        # Handle dataclass-based payload
+                        if payload.success:
+                            # Timer fired successfully
+                            pass
+                except Exception:
+                    # Failed to deserialize timer payload
+                    pass
+
+            # Don't return cached result - let step execute to produce actual value
+            # The schedule_timer() call will see the timer has fired and return
+            # Then the step continues and produces its real return value
+
+        return _CACHE_MISS
 
     async def update_step_retryability(self, step: int, is_retryable: bool) -> None:
-        """
-        Update whether a step error is retryable.
+        """Update whether a step error is retryable.
 
-        **Rust Reference**: `src/executor/context.rs` line 222
-
-        This is called by the step decorator when a step returns an error
+        Called by the @step decorator when a step returns an error
         to mark whether the error is retryable (transient) or not (permanent).
 
         Args:
@@ -362,52 +394,18 @@ class Context:
             flow_id=self.flow_id, step=step, is_retryable=is_retryable
         )
 
-    async def await_timer(self, step: int) -> None:
-        """
-        Wait for a timer to fire.
-
-        Marks the step as WAITING_FOR_TIMER and waits for timer notification.
-
-        From Rust:
-            pub async fn await_timer(&self, step: i32) -> Result<()>
-
-        Args:
-            step: Step number that is waiting for timer
-        """
-        # Implementation will be completed when we add timer support
-        # For now, this is a placeholder
-        pass
-
-    async def complete_timer(self, step: int) -> None:
-        """
-        Mark a timer as complete.
-
-        Updates step status from WAITING_FOR_TIMER to PENDING for re-execution.
-
-        From Rust:
-            pub async fn complete_timer(&self, step: i32) -> Result<()>
-
-        Args:
-            step: Step number whose timer has fired
-        """
-        # Implementation will be completed when we add timer support
-        pass
-
     # =========================================================================
     # SUSPENSION REASON MANAGEMENT
     # =========================================================================
 
     def set_suspend_reason(self, reason: "SuspendReason") -> None:
-        """
-        Set the suspension reason for this flow.
-
-        **Rust Reference**: `src/executor/context.rs` lines 462-471
+        """Set the suspension reason for this flow.
 
         Called by schedule_timer() or await_external_signal() to indicate
         the flow is suspending. The worker checks this after flow execution
         to determine if the flow suspended instead of completing.
 
-        **Thread Safety**: Uses threading.Lock for atomic access
+        Thread Safety: Uses threading.Lock for atomic access.
         Reference: https://docs.python.org/3/library/threading.html#lock-objects
 
         Args:
@@ -429,17 +427,14 @@ class Context:
             self._suspend_reason = reason
 
     def take_suspend_reason(self) -> Optional["SuspendReason"]:
-        """
-        Take and clear the suspension reason (consuming it atomically).
-
-        **Rust Reference**: `src/executor/context.rs` lines 534-539
+        """Take and clear the suspension reason (consuming it atomically).
 
         Called by the worker after flow execution to check if the flow
-        suspended. Returns Some(reason) if suspended, None if completed.
+        suspended. Returns the reason if suspended, None if completed.
 
         Taking clears the value, ensuring each suspension is handled only once.
 
-        **Thread Safety**: Lock ensures atomic read-and-clear operation
+        Thread Safety: Lock ensures atomic read-and-clear operation.
         Reference: BEST_PRACTICES.md section on thread-safe state
 
         Returns:
@@ -464,12 +459,9 @@ class Context:
             return reason
 
     def has_suspend_reason(self) -> bool:
-        """
-        Check if a suspension reason is pending without consuming it.
+        """Check if a suspension reason is pending without consuming it.
 
-        **Rust Reference**: `src/executor/context.rs` lines 507-513
-
-        Used by flow macro to avoid caching "completion" when the flow
+        Used by @flow decorator to avoid caching "completion" when the flow
         is actually suspending. Unlike take_suspend_reason(), this does
         not consume the suspend reason.
 
@@ -487,10 +479,7 @@ class Context:
             return self._suspend_reason is not None
 
     def get_suspend_reason(self) -> Optional["SuspendReason"]:
-        """
-        Get a copy of the suspension reason without clearing it.
-
-        **Rust Reference**: `src/executor/context.rs` lines 519-524
+        """Get a copy of the suspension reason without clearing it.
 
         Returns:
             SuspendReason if set, None otherwise
@@ -516,11 +505,7 @@ class Context:
 
 
 def get_current_context() -> Context | None:
-    """
-    Get the current Context from task-local storage.
-
-    From Rust:
-        EXECUTION_CONTEXT.try_with(|ctx| ctx.clone())
+    """Get the current Context from task-local storage.
 
     Returns:
         Current Context if set, None otherwise
@@ -534,11 +519,7 @@ def get_current_context() -> Context | None:
 
 
 def get_current_call_type() -> CallType:
-    """
-    Get the current CallType from task-local storage.
-
-    From Rust:
-        CALL_TYPE.try_with(|ct| *ct)
+    """Get the current CallType from task-local storage.
 
     Returns:
         Current CallType (defaults to RUN if not set)

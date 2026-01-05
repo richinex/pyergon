@@ -9,13 +9,11 @@ Single type combining state and execution methods. Package name
 provides context (pyergon.Executor), so no redundant prefix needed.
 """
 
-import pickle
 from collections.abc import Awaitable, Callable
 from typing import Generic, TypeVar
 from uuid import uuid4
 
 from pyergon.core import (
-    _CACHE_MISS,
     CALL_TYPE,
     EXECUTION_CONTEXT,
     CallType,
@@ -108,31 +106,8 @@ class Executor(Generic[T]):
         token_call_type = CALL_TYPE.set(CallType.RUN)
 
         try:
-            # Allocate step 0 for flow entry
-            step_0 = ctx.next_step()  # Should be 0
-            retry_policy = getattr(self.flow, "_ergon_retry_policy", None)
-
-            # Check cache before logging (critical for replay)
-            cached = await ctx.get_cached_result(
-                step=step_0, class_name=self.class_name, method_name="<flow_entry>", params_hash=0
-            )
-
-            if cached is not _CACHE_MISS:
-                # Flow already completed - return cached result
-                return Completed(result=cached)
-
-            # Not cached - log flow entry invocation
-            await ctx.log_step_start(
-                step=step_0,
-                class_name=self.class_name,
-                method_name="<flow_entry>",
-                parameters=b"",
-                params_hash=0,
-                delay=None,
-                retry_policy=retry_policy,
-            )
-
             # Execute flow with context available
+            # The @flow decorator handles step 0 allocation, caching, and logging
             result = await entry_point(self.flow)
 
             # Check for suspension
@@ -142,13 +117,7 @@ class Executor(Generic[T]):
                 # Flow suspended - don't log completion
                 return Suspended(reason=suspend_reason)
             else:
-                # Flow completed - log completion
-                result_bytes = pickle.dumps(result)
-                await ctx.log_step_completion(
-                    step=step_0,
-                    return_value=result_bytes,
-                    is_retryable=None,
-                )
+                # Flow completed normally
                 return Completed(result=result)
 
         except _SuspendExecution:

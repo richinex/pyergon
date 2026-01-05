@@ -1,20 +1,16 @@
-"""
-Instrumented decorators for durable workflows.
+"""Instrumented decorators for durable workflows.
 
-This module provides @flow and @step decorators with FULL instrumentation
-matching Rust macro-generated code.
+This module provides @flow and @step decorators with full instrumentation
+for durable execution:
 
-RUST COMPLIANCE: Matches Rust #[step] and #[flow] macro behavior exactly.
-
-From Rust ergon macros:
-- Cache checking with params_hash
+- Cache checking with params_hash for deterministic replay
 - Automatic logging (log_step_start/completion)
 - Retry loop with exponential backoff
-- Integration with Context
-- CallType handling
+- Integration with execution Context
+- CallType handling for signals and child flows
 
-Design: Decorators generate instrumentation code around user functions,
-similar to how Rust macros expand.
+Design: Decorators generate instrumentation code around user functions
+to enable durable execution with replay safety.
 """
 
 import asyncio
@@ -52,14 +48,10 @@ def step(
     delay: int | None = None,
     retry_policy: RetryPolicy | None = None,
 ) -> F:
-    """
-    Mark a method as a durable workflow step with FULL instrumentation.
-
-    RUST COMPLIANCE: Matches Rust #[step] macro behavior exactly.
-    Generates code similar to what Rust macro expands to.
+    """Mark a method as a durable workflow step with full instrumentation.
 
     This decorator wraps the function with:
-    1. Cache checking (params_hash comparison)
+    1. Cache checking (params_hash comparison for deterministic replay)
     2. Automatic logging (log_step_start/completion)
     3. Retry loop (exponential backoff)
     4. Error handling (is_retryable check)
@@ -90,10 +82,6 @@ def step(
             # Waits 1 second before executing
             pass
         ```
-
-    From Rust #[step] macro:
-        The macro generates ~50 lines of instrumentation code
-        around the user's function. This decorator does the same.
     """
 
     def decorator(f: F) -> F:
@@ -138,11 +126,10 @@ def step(
         # Create instrumented wrapper
         @functools.wraps(f)
         async def async_wrapper(*args, **kwargs):
-            """
-            Instrumented wrapper matching Rust macro expansion.
+            """Instrumented wrapper for step execution.
 
-            From Rust #[step] macro expansion:
-            1. Get Context
+            Flow:
+            1. Get execution Context
             2. Allocate step number
             3. Serialize parameters
             4. Check cache
@@ -150,8 +137,7 @@ def step(
             6. Execute (with retry)
             7. Log completion
             """
-            # Get Context (task-local)
-            # From Rust: EXECUTION_CONTEXT.try_with(|c| c.clone())
+            # Get execution Context from task-local storage
             ctx = get_current_context()
 
             if ctx is None:
@@ -164,7 +150,6 @@ def step(
             method_name = f.__name__
 
             # Serialize parameters (skip 'self')
-            # From Rust: let params = serialize_value(&params)?
             params_dict = {"args": args[1:] if len(args) > 1 else [], "kwargs": kwargs}
             try:
                 parameters = pickle.dumps(params_dict)
@@ -172,7 +157,7 @@ def step(
                 # If we can't serialize, we can't cache - just execute
                 return await f(*args, **kwargs)
 
-            # Compute step ID using hash (matches Rust step.rs:691-697)
+            # Compute step ID using hash for deterministic replay
             # Hash-based IDs are stable across replays (unlike counters)
             # IMPORTANT: Hash only method name, NOT parameters
             # This ensures same step gets same ID even if parameters change
@@ -189,16 +174,14 @@ def step(
             else:
                 step_num = async_wrapper._step_id_cache[hash_key]  # type: ignore
 
-            # Compute params hash
-            # From Rust: let params_hash = hash(&params)
+            # Compute params hash for cache key
             params_hash = _compute_params_hash(parameters)
 
-            # Save and set enclosing step (matches Rust step.rs:700-706)
+            # Save and set enclosing step for child flow coordination
             prev_enclosing_step = ctx.get_enclosing_step()
             ctx.set_enclosing_step(step_num)
 
-            # Check cache
-            # From Rust: if let Some(cached) = ctx.get_cached_result(...)
+            # Check cache for previous execution
             cached = await ctx.get_cached_result(
                 step=step_num,
                 class_name=class_name,
@@ -207,15 +190,14 @@ def step(
             )
 
             if cached is not _CACHE_MISS:
-                # Cache hit - restore enclosing step before returning (Rust step.rs:734-737)
+                # Cache hit - restore enclosing step before returning
                 if prev_enclosing_step is not None:
                     ctx.set_enclosing_step(prev_enclosing_step)
                 # Return cached result (can be None)
                 # (get_cached_result raises if cached exception)
                 return cached
 
-            # Log step start
-            # From Rust: ctx.log_step_start(LogStepStartParams { ... })
+            # Log step start to storage
             await ctx.log_step_start(
                 step=step_num,
                 class_name=class_name,
@@ -227,7 +209,6 @@ def step(
             )
 
             # Execute with retry loop
-            # From Rust: loop { match step_fn().await { ... } }
             attempts = 0
             max_attempts = retry_policy.max_attempts if retry_policy else 1
 
@@ -244,7 +225,7 @@ def step(
                         is_retryable=None,  # None = not an error
                     )
 
-                    # Restore enclosing step before returning (Rust step.rs:792-793)
+                    # Restore enclosing step before returning
                     if prev_enclosing_step is not None:
                         ctx.set_enclosing_step(prev_enclosing_step)
 
@@ -278,7 +259,6 @@ def step(
                         # This ensures worker can determine if error is retryable at flow level
                         await ctx.update_step_retryability(step_num, is_retryable)
 
-                        # From Rust step macro lines 434-452:
                         # Only cache non-retryable (permanent) errors
                         # Retryable errors cause flow-level retry and should NOT be cached
                         if not is_retryable:
@@ -312,10 +292,6 @@ def flow_type(
     """
     Mark a class as a FlowType with optional InvokableFlow support.
 
-    RUST COMPLIANCE: Matches Rust #[derive(FlowType)] and #[invokable] macros.
-
-    **Rust Reference**: `ergon_macros/src/flow_type.rs` lines 5-68
-
     This decorator:
     1. Implements FlowType protocol (type_id() method)
     2. Optionally implements InvokableFlow protocol
@@ -327,7 +303,6 @@ def flow_type(
         type_id: Optional custom type identifier (defaults to class name)
         retry_policy: Optional retry policy for flow-level retries
         invokable: Optional output type for InvokableFlow protocol
-                   (matches Rust #[invokable(output = Type)])
 
     Example:
         ```python
@@ -344,7 +319,7 @@ def flow_type(
             async def process(self) -> str:
                 return "done"
 
-        # Invokable child flow (matches Rust #[invokable(output = String)])
+        # Invokable child flow (can be called from parent flows)
         @flow_type(invokable=str)
         class PaymentFlow:
             @flow
@@ -357,13 +332,6 @@ def flow_type(
             @flow
             async def run(self) -> str:
                 return "resilient"
-        ```
-
-    From Rust:
-        ```rust
-        #[derive(FlowType)]
-        #[invokable(output = String)]
-        struct PaymentFlow { ... }
         ```
     """
 
@@ -385,19 +353,14 @@ def flow_type(
         c.type_id = _type_id  # type: ignore
 
         # Implement InvokableFlow protocol if invokable parameter provided
-        # From Rust flow_type.rs lines 53-60
         if invokable is not None:
             c._invokable_output_type = invokable  # type: ignore
             # Mark as implementing InvokableFlow protocol
             c._implements_invokable = True  # type: ignore
 
         # Add invoke() method for child flow invocation
-        # From Rust: InvokeChild trait extension on Arc<T> where T: FlowType
         def invoke(self, child: "InvokableFlow") -> "PendingChild":
-            """
-            Invoke a child flow and get a handle to await its result.
-
-            **Rust Reference**: `src/executor/child_flow.rs` lines 361-384
+            """Invoke a child flow and get a handle to await its result.
 
             This method:
             1. Serializes the child flow
@@ -440,18 +403,12 @@ def flow_type(
                         return result
                 ```
 
-            From Rust:
-                ```rust
-                fn invoke<C>(&self, child: C) -> PendingChild<C::Output>
-                where C: InvokableFlow + Serialize + ...
-                ```
             """
             # Import here to avoid circular dependency
             from pyergon.executor.pending_child import PendingChild
 
             # Pure builder - just capture data, no side effects
             # All logic (UUID generation, scheduling) happens in .result()
-            # From Rust lines 376-383
             try:
                 child_bytes = pickle.dumps(child)
             except Exception as e:
@@ -492,13 +449,8 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
     """
     Mark an async method as a flow entry point.
 
-    RUST COMPLIANCE: Matches Rust #[flow] macro (method-level decorator).
-
-    **Rust Reference**: `ergon_macros/src/flow.rs` lines 67-258
-
     This decorator marks which method is the entry point for flow execution.
-    In Rust, #[flow] is applied to methods within an impl block.
-    In Python, @flow is applied to methods within a class.
+    Applied to methods within a @flow_type decorated class.
 
     The @flow method gets full instrumentation:
     - Context management
@@ -531,17 +483,6 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
                 validated = await self.validate()
                 return await self.transform(validated)
         ```
-
-    From Rust:
-        ```rust
-        impl DataPipeline {
-            #[flow]
-            async fn process(self: Arc<Self>) -> Result<i32> {
-                let validated = self.clone().validate().await?;
-                self.transform(validated).await
-            }
-        }
-        ```
     """
 
     def decorator(f: F) -> F:
@@ -553,11 +494,10 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
         # Create instrumented wrapper
         @functools.wraps(f)
         async def async_wrapper(*args, **kwargs):
-            """
-            Instrumented wrapper matching Rust flow macro expansion.
+            """Instrumented wrapper for flow execution.
 
-            From Rust flow.rs lines 170-254:
-            1. Get Context
+            Flow:
+            1. Get execution Context
             2. Allocate step number
             3. Serialize parameters
             4. Check cache
@@ -585,7 +525,6 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
                 return await f(*args, **kwargs)
 
             # Compute step ID (step 0 for flow entry point)
-            # From Rust flow.rs line 178: let __step = __ctx.next_step();
             step_num = 0  # Flow entry point is always step 0
 
             # Compute params hash
@@ -603,8 +542,7 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
                 # Cache hit - return cached result
                 return cached
 
-            # Log flow start
-            # From Rust flow.rs lines 220-231
+            # Log flow start to storage
             await ctx.log_step_start(
                 step=step_num,
                 class_name=class_name,
@@ -659,11 +597,8 @@ def _compute_params_hash(parameters: bytes) -> int:
     """
     Compute hash using xxHash (4-6x faster than SHA256).
 
-    Performance: xxHash is 4-6x faster than SHA256 for non-cryptographic use
-    Deterministic: Yes, xxHash is deterministic across platforms
-
-    From Rust: hash(&params) using seahash
-    Note: xxHash is comparable to seahash in speed, deterministic, and widely used
+    Performance: xxHash is 4-6x faster than SHA256 for non-cryptographic use.
+    Deterministic: Yes, xxHash is deterministic across platforms.
 
     Args:
         parameters: Serialized parameters
@@ -673,5 +608,4 @@ def _compute_params_hash(parameters: bytes) -> int:
     """
     # xxHash provides intdigest() for direct integer output (no struct.unpack needed)
     # Mask to 63 bits for SQLite INTEGER (signed 64-bit, max 2^63-1)
-    # Matching Rust's "params_hash as i64" cast behavior
     return xxhash.xxh64(parameters).intdigest() & 0x7FFFFFFFFFFFFFFF

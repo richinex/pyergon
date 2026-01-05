@@ -114,12 +114,16 @@ class PendingChild(Generic[R]):
         # 31-bit positive integer for SQLite INTEGER range
         step = int(int.from_bytes(hasher.digest()[:4], byteorder="little") & 0x7FFFFFFF)
 
+        # Compute params_hash from child data for non-determinism detection
+        import xxhash
+        params_hash = xxhash.xxh64(self.child_bytes).intdigest() & 0x7FFFFFFFFFFFFFFF
+
         await ctx.log_step_start(
             step=step,
             class_name="<child_flow>",
             method_name=f"invoke({self.child_type})",
-            parameters=b"",
-            params_hash=0,
+            parameters=self.child_bytes,
+            params_hash=params_hash,
             delay=None,
             retry_policy=None,
         )

@@ -1,19 +1,16 @@
-"""
-Multi-Worker Stress Test with Deterministic Assertions
-
-**Rust Reference**: ergon_rust/ergon/examples/complex_multi_worker_load.rs
+"""Multi-Worker Stress Test with Deterministic Assertions.
 
 Run with:
-    PYTHONPATH=src python3 examples/complex_multi_worker_load.py
+    PYTHONPATH=src python3 examples/complex_multi_worker_load_sqlite.py
 
 Scenario:
-- 4 Concurrent Workers
-- 30 Concurrent Flows
-- Single InMemory Database (High Concurrency)
-- Deterministic Failure Injection
-- Child Flow Invocation Testing
+- 4 concurrent workers
+- 30 concurrent flows
+- SQLite database with event-driven notifications
+- Deterministic failure injection
+- Child flow invocation testing
 
-This example proves:
+This example demonstrates:
 1. Step caching works (deterministic execution counts)
 2. Retry logic works (10 flows fail once, then succeed)
 3. Child flows work (30 LabelFlow invocations)
@@ -34,13 +31,10 @@ from pyergon.storage.sqlite import SqliteExecutionLog
 
 
 class GlobalMetrics:
-    """
-    Thread-safe global metrics using threading.Lock.
+    """Thread-safe global metrics for tracking step execution counts.
 
-    **Rust Reference**: AtomicU32 counters in complex_multi_worker_load.rs
-
-    In Python, we use a Lock to protect increment operations.
-    This ensures accurate counts even with multiple workers.
+    Uses threading.Lock to ensure accurate counts with multiple workers
+    executing flows concurrently.
     """
 
     def __init__(self):
@@ -121,17 +115,13 @@ class ShippingLabel:
 @dataclass
 @flow_type
 class OrderFlow:
-    """
-    Main order processing flow with retry policy.
+    """Main order processing flow with retry policy.
 
-    **Rust Reference**: OrderFlow struct in complex_multi_worker_load.rs lines 54-141
-
-    This flow demonstrates:
+    Demonstrates:
     - Deterministic failure injection (id % 3 == 0 fails validate)
     - Retry behavior (fails once, then succeeds)
     - Child flow invocation (LabelFlow)
     - Step execution tracking
-    - Retry policy via decorator (matches Rust #[flow(retry = ...)])
     """
 
     id: int
@@ -140,15 +130,14 @@ class OrderFlow:
     # 1. Validate: Fails once if ID % 3 == 0
     @step
     async def validate(self) -> None:
-        """
-        Validate order.
+        """Validate order with deterministic failure injection.
 
-        **Deterministic Failure**: id % 3 == 0, first attempt → fails
+        Fails on first attempt if id % 3 == 0 to test retry logic.
         """
         attempt = METRICS.get_attempt(f"{self.order_ref}-val")
         METRICS.increment_validate()
 
-        # Deterministic failure logic (same as Rust)
+        # Deterministic failure: fail first attempt for every 3rd order
         if self.id % 3 == 0 and attempt == 1:
             raise ValueError("Simulated Network Blip")
 
@@ -161,10 +150,9 @@ class OrderFlow:
     # 3. Inventory: Fails once if ID % 3 == 1
     @step
     async def reserve_inventory(self) -> None:
-        """
-        Reserve inventory.
+        """Reserve inventory with deterministic failure injection.
 
-        **Deterministic Failure**: id % 3 == 1, first attempt → fails
+        Fails on first attempt if id % 3 == 1 to test retry logic.
         """
         attempt = METRICS.get_attempt(f"{self.order_ref}-inv")
         METRICS.increment_inventory()
@@ -191,13 +179,7 @@ class OrderFlow:
         )
     )
     async def run_order(self) -> None:
-        """
-        Main order processing flow.
-
-        **Rust Reference**: run_order() in complex_multi_worker_load.rs lines 108-141
-
-        **Python Note**: Retry policy is set via @flow decorator,
-        matching Rust's #[flow(retry = ...)] syntax.
+        """Main order processing flow with retry policy.
 
         Steps:
         1. Validate (may fail once)
@@ -213,14 +195,13 @@ class OrderFlow:
         await self.validate()
         await self.fraud_check()
 
-        # Simulate DB contention delay (like Rust line 114)
+        # Simulate DB contention delay
         await asyncio.sleep(0.01)  # 10ms
 
         await self.reserve_inventory()
         await self.process_payment()
 
-        # Invoke Child Flow
-        # **Rust Reference**: lines 125-129
+        # Invoke child flow to generate shipping label
         label = await self.invoke(LabelFlow(parent_id=self.id)).result()
 
         await self.notify(label)
@@ -232,26 +213,19 @@ class OrderFlow:
 @dataclass
 @flow_type(invokable=ShippingLabel)
 class LabelFlow:
-    """
-    Child flow that generates shipping label.
+    """Child flow that generates shipping labels.
 
-    **Rust Reference**: LabelFlow struct in complex_multi_worker_load.rs lines 143-163
-
-    This is invoked by OrderFlow as a child flow.
+    Invoked by OrderFlow to generate tracking numbers.
     """
 
     parent_id: int
 
     @flow
     async def generate(self) -> ShippingLabel:
-        """
-        Generate shipping label.
-
-        **Rust Reference**: generate() in complex_multi_worker_load.rs lines 154-162
-        """
+        """Generate shipping label with tracking number."""
         METRICS.increment_label()
 
-        # Simulate work (like Rust line 158)
+        # Simulate label generation work
         await asyncio.sleep(0.02)  # 20ms
 
         return ShippingLabel(tracking=f"TRK-{self.parent_id}")
@@ -263,13 +237,10 @@ class LabelFlow:
 
 
 async def main():
-    """
-    Main test execution.
-
-    **Rust Reference**: main() in complex_multi_worker_load.rs lines 169-290
+    """Execute multi-worker stress test.
 
     Steps:
-    1. Setup InMemory storage
+    1. Setup SQLite storage
     2. Schedule 30 orders with deterministic IDs
     3. Spawn 4 workers
     4. Wait for all 30 completions
@@ -281,21 +252,16 @@ async def main():
     print("   - DB:      SQLite (Event-Driven Notifications)")
     print()
 
-    # 1. Setup Database and Scheduler with Versioning
-    # **Rust Reference**: lines 180-181
+    # 1. Setup database and scheduler with versioning
     storage = SqliteExecutionLog("test_load.db")
     await storage.connect()
     await storage.reset()  # Clear any previous test data
     scheduler = Scheduler(storage).with_version("test-v1.0")
 
-    # 2. Schedule 30 Orders (Deterministic Batch)
-    # **Rust Reference**: lines 187-193
-    # Group 0 (Mod 0): 10 orders -> Fail Validate
-    # Group 1 (Mod 1): 10 orders -> Fail Inventory
-    # Group 2 (Mod 2): 10 orders -> Clean
-    #
-    # **Python Note**: Retry policy is now set via @flow decorator (line 121),
-    # matching Rust's #[flow(retry = ...)] syntax. No need to pass it here.
+    # 2. Schedule 30 orders with deterministic failure patterns
+    # Group 0 (id % 3 == 0): 10 orders -> Fail validate on first attempt
+    # Group 1 (id % 3 == 1): 10 orders -> Fail inventory on first attempt
+    # Group 2 (id % 3 == 2): 10 orders -> No failures
 
     for i in range(30):
         flow = OrderFlow(id=i, order_ref=f"ORD-{i:02d}")
@@ -303,15 +269,14 @@ async def main():
 
     print("Scheduled 30 flows.")
 
-    # 3. Spawn 4 Workers
-    # **Rust Reference**: lines 198-210
+    # 3. Spawn 4 workers
     workers = []
     for i in range(4):
         worker = Worker(
             storage=storage,
             worker_id=f"worker-{i}",
             enable_timers=False,
-            poll_interval=0.05,  # 50ms aggressive polling (like Rust line 203)
+            poll_interval=0.05,  # 50ms aggressive polling for high concurrency
         )
 
         await worker.register(OrderFlow)
@@ -325,20 +290,17 @@ async def main():
     print("Waiting for 30 completions...")
     print()
 
-    # 4. Wait for completion (Timeout safety)
-    # **Rust Reference**: lines 216-218
+    # 4. Wait for completion with timeout safety
     try:
         await asyncio.wait_for(METRICS.completion_event.wait(), timeout=30.0)
     except TimeoutError:
         print("WARNING: Timeout waiting for completions")
 
     # Shutdown workers
-    # **Rust Reference**: lines 220-223
     for handle in workers:
         await handle.shutdown()
 
-    # Calculate expected counts based on failure injection logic:
-    # **Rust Reference**: lines 225-231
+    # Expected counts based on failure injection logic:
     # - 10 orders (id % 3 == 0): fail validate once -> 2 validate attempts each = 20 total
     # - 10 orders (id % 3 == 1): fail inventory once -> 2 inventory attempts each = 20 total
     # - 10 orders (id % 3 == 2): no failures -> 1 attempt each = 10 total
@@ -347,7 +309,6 @@ async def main():
     # All others: 30 (no retries)
 
     # Get actual counts
-    # **Rust Reference**: lines 233-238
     actual_validate = METRICS.step_validate
     actual_fraud = METRICS.step_fraud
     actual_inventory = METRICS.step_inventory
@@ -356,7 +317,6 @@ async def main():
     actual_notify = METRICS.step_notify
 
     # Print results
-    # **Rust Reference**: lines 240-274
     print("FINAL STATISTICS REPORT")
     print("---------------------------------------------------")
     print("Step          | Expected | Actual | Status")
@@ -373,8 +333,7 @@ async def main():
     print(f"Notify        | 30       | {actual_notify:<6} | {status(30, actual_notify)}")
     print("---------------------------------------------------")
 
-    # Final verdict
-    # **Rust Reference**: lines 276-286
+    # Verify deterministic execution
     if (
         actual_validate == 40
         and actual_fraud == 30

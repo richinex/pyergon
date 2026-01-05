@@ -116,14 +116,28 @@ async def schedule_timer_named(duration: float, name: str) -> None:
                 # Deserialize the SuspensionPayload to check success
                 import pickle
 
+                from pyergon.executor.suspension_payload import SuspensionPayload
+
                 try:
                     payload = pickle.loads(result_bytes)
-                    if payload.get("success", False):
-                        # Timer fired successfully
-                        return
+
+                    # Handle both dict (backward compat) and dataclass
+                    if isinstance(payload, SuspensionPayload):
+                        if payload.success:
+                            # Timer fired successfully
+                            return
+                        else:
+                            # Timer marked as failed (shouldn't happen, but handle gracefully)
+                            raise TimerError("Timer marked as failed")
+                    elif isinstance(payload, dict):
+                        # Backward compatibility with dict-based payloads
+                        if payload.get("success", False):
+                            # Timer fired successfully
+                            return
+                        else:
+                            raise TimerError("Timer marked as failed")
                     else:
-                        # Timer marked as failed (shouldn't happen, but handle gracefully)
-                        raise TimerError("Timer marked as failed")
+                        raise TimerError(f"Invalid payload type: {type(payload)}")
                 except Exception as e:
                     raise TimerError(f"Failed to deserialize timer payload: {e}")
 
