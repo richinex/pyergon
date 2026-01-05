@@ -101,17 +101,10 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      - name: Sign distributions with Sigstore
+      - name: Sign and upload distributions with Sigstore
         uses: sigstore/gh-action-sigstore-python@v3.0.0
         with:
           inputs: >-
             ./dist/*.tar.gz
             ./dist/*.whl
-
-      - name: Upload to GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload
-          '${{ github.ref_name }}' dist/**
-          --repo '${{ github.repository }}'
+          release-signing-artifacts: true
