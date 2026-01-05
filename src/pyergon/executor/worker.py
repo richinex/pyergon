@@ -197,6 +197,15 @@ class Worker:
         self._shutdown_event = asyncio.Event()
         self._running = False
 
+        # Track background tasks to prevent garbage collection
+        # See: asyncio docs - "Save a reference to avoid task disappearing mid-execution"
+        self._background_tasks: set[asyncio.Task] = set()
+
+        # Dequeue channel (bounded to 1 like Rust) to prevent work hogging
+        # Rust ref: worker.rs line 809-811
+        self._dequeue_queue: asyncio.Queue[ScheduledFlow | None] = asyncio.Queue(maxsize=1)
+        self._dequeue_task: asyncio.Task | None = None
+
         self._supports_work_notifications = isinstance(storage, WorkNotificationSource)
         self._supports_timer_notifications = isinstance(storage, TimerNotificationSource)
 
@@ -319,6 +328,36 @@ class Worker:
         task = asyncio.create_task(self._run())
         return WorkerHandle(self, task)
 
+    async def _background_dequeue_loop(self) -> None:
+        """Background task that continuously dequeues flows and puts them in bounded queue.
+
+        Matches Rust's dedicated dequeue task (worker.rs lines 830-878).
+        Uses bounded queue (maxsize=1) to prevent hogging - worker must consume
+        before next dequeue happens.
+        """
+        while self._running and not self._shutdown_event.is_set():
+            try:
+                scheduled_flow = await self._storage.dequeue_flow(self._worker_id)
+
+                if scheduled_flow is not None:
+                    # Put in queue - blocks if queue is full (worker hasn't consumed)
+                    await self._dequeue_queue.put(scheduled_flow)
+                else:
+                    # No flow available, wait for notification
+                    if self._supports_work_notifications:
+                        try:
+                            await asyncio.wait_for(
+                                self._work_notify.wait(),
+                                timeout=self._poll_interval_with_jitter
+                            )
+                            self._work_notify.clear()
+                        except TimeoutError:
+                            pass
+
+            except Exception as e:
+                logger.error(f"Background dequeue error: {e}")
+                await asyncio.sleep(0.1)
+
     async def _run(self) -> None:
         """Main worker loop with event-driven timer processing.
 
@@ -335,6 +374,9 @@ class Worker:
         """
         logger.info(f"Worker {self._worker_id} started")
 
+        # Start background dequeue task (Rust ref: worker.rs line 830)
+        self._dequeue_task = asyncio.create_task(self._background_dequeue_loop())
+
         try:
             while self._running and not self._shutdown_event.is_set():
                 try:
@@ -343,19 +385,28 @@ class Worker:
                     if self._signal_source is not None:
                         await self._process_signals()
 
-                    got_flow = await self._process_flow()
-                    logger.debug(
-                        f"Worker {self._worker_id}: _process_flow() returned got_flow={got_flow}"
-                    )
-
-                    if got_flow:
-                        logger.debug(
-                            f"Worker {self._worker_id}: Got flow, looping immediately for more work"
+                    # Try to get flow from bounded queue with timeout
+                    # This matches Rust's dequeue_rx.recv() which always awaits
+                    try:
+                        scheduled_flow = await asyncio.wait_for(
+                            self._dequeue_queue.get(),
+                            timeout=self._poll_interval if not self._enable_timers else 0.01
                         )
-                        continue
+                        self._dequeue_queue.task_done()
 
-                    if self._enable_timers:
-                        await self._wait_for_timer()
+                        # Execute flow in background
+                        task = asyncio.create_task(self._execute_flow(scheduled_flow))
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
+
+                        logger.debug(
+                            f"Worker {self._worker_id} claimed flow: "
+                            f"task_id={scheduled_flow.task_id}"
+                        )
+                    except asyncio.TimeoutError:
+                        # No flow available, wait on timer if enabled
+                        if self._enable_timers:
+                            await self._wait_for_timer()
 
                 except Exception as e:
                     logger.error(f"Worker {self._worker_id} error: {e}")
@@ -596,7 +647,12 @@ class Worker:
                             return False
                     return False
 
-                asyncio.create_task(self._execute_flow(scheduled_flow))
+                # Create background task with strong reference to prevent GC
+                # asyncio docs: "Save a reference to avoid task disappearing mid-execution"
+                task = asyncio.create_task(self._execute_flow(scheduled_flow))
+                self._background_tasks.add(task)
+                # Auto-cleanup when task completes
+                task.add_done_callback(self._background_tasks.discard)
 
                 logger.debug(
                     f"Worker {self._worker_id} claimed flow: "
@@ -693,10 +749,29 @@ class Worker:
         """Gracefully shutdown the worker.
 
         Explicit shutdown, not relying on GC.
+        Waits for all background tasks to complete.
         """
         logger.info(f"Worker {self._worker_id} shutting down...")
         self._running = False
         self._shutdown_event.set()
+
+        # Stop background dequeue task
+        if self._dequeue_task and not self._dequeue_task.done():
+            self._dequeue_task.cancel()
+            try:
+                await self._dequeue_task
+            except asyncio.CancelledError:
+                pass
+
+        # Wait for background flow execution tasks to complete
+        if self._background_tasks:
+            logger.info(
+                f"Worker {self._worker_id}: Waiting for {len(self._background_tasks)} "
+                "background tasks to complete..."
+            )
+            # Use return_exceptions=True to handle any task failures gracefully
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            logger.info(f"Worker {self._worker_id}: All background tasks completed")
 
 
 class WorkerHandle:

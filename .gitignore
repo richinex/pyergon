@@ -52,3 +52,4 @@ docs_to_ignore/
 CLAUDE.md
 .claude/
 data/
+docs/
