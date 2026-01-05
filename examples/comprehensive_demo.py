@@ -1,41 +1,25 @@
 """
-Comprehensive Ergon Demo: Complete Order Processing System
+Complete order processing system with versioning (clean output)
 
-**Rust Reference**: ergon_rust/ergon/examples/comprehensive_demo.rs
+**Rust Reference**: ergon_rust/ergon/examples/comprehensive_demo_3.rs
 
-This example demonstrates ALL major Ergon features in a single, realistic workflow:
+Clean production-ready example with:
+- NO logging during execution (silent flows)
+- Multiple deployment versions (v1.0 vs v2.0) running concurrently
+- Event-driven completion waiting
+- Only final results printed
 
-# Features Demonstrated
-
-1. **Normal Flows**: Main order processing flow with completion notification
-2. **Child Flows (invoke API)**: Payment and shipping as separate invokable flows
-3. **Timers**: Fraud check delay, shipping preparation delay
-4. **DAG Execution**: Parallel validation steps (inventory, customer, fraud)
-5. **Retry Policies**: Automatic retry for transient payment failures
-6. **Step Caching**: Successful steps aren't re-executed on retry
-7. **Error Handling**: Retryable (network) vs non-retryable (business logic) errors
-8. **Distributed Workers**: Multiple workers processing flows concurrently
-9. **Type Safety**: Flow coordination with InvokableFlow protocol
-
-# Architecture
-
-```text
-OrderFlow (main)
-  ├─ validate_customer ────┐
-  ├─ check_inventory   ────┤─── (parallel DAG)
-  └─ check_fraud (timer) ──┘
-        │
-        ├─ PaymentFlow (child, retryable) ── signal parent
-        │
-        └─ ShippingFlow (child, timer) ──── signal parent
-```
+Output format:
+    {task_id}: {status} (retries: {count})
+      {receipt}
 
 Run:
-    PYTHONPATH=src python3 examples/comprehensive_demo.py
+    PYTHONPATH=src python3 examples/comprehensive_demo_3.py
 """
 
 import asyncio
 import hashlib
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -44,24 +28,19 @@ from pyergon.core import RetryPolicy, TaskStatus
 from pyergon.executor.timer import schedule_timer_named
 from pyergon.storage.sqlite import SqliteExecutionLog
 
+# Suppress worker logging for clean output (like Rust tracing::debug!)
+logging.basicConfig(level=logging.CRITICAL)
+
+
 # ============================================================================
-# CHILD FLOWS: Invokable flows that suspend parent until completion
+# CHILD FLOWS
 # ============================================================================
 
 
 @dataclass
 @flow_type(invokable=str)
 class PaymentFlow:
-    """
-    Payment processing child flow with retry policy.
-
-    **Rust Reference**: PaymentFlow in comprehensive_demo.rs lines 47-84
-
-    Features:
-    - Retryable on network errors
-    - Invokable by parent flow
-    - Returns payment ID (str)
-    """
+    """Payment processing child flow (no logging)."""
 
     order_id: str
     amount: float
@@ -71,16 +50,13 @@ class PaymentFlow:
         """
         Process payment with simulated retryable failures.
 
-        **Rust Reference**: process() lines 55-70
+        **Rust Reference**: process() lines 28-35
         """
-        print(f"  [Payment] Processing ${self.amount:.2f} for order {self.order_id}")
-
-        # Deterministic failure simulation based on order_id hash
+        # Deterministic failure simulation
         hash_value = int(hashlib.md5(self.order_id.encode()).hexdigest(), 16)
         should_fail = (hash_value % 10) < 3
 
         await self.charge_card(should_fail)
-
         return f"PAYMENT-{uuid.uuid4().hex[:8]}"
 
     @step
@@ -88,32 +64,17 @@ class PaymentFlow:
         """
         Charge customer's card.
 
-        **Rust Reference**: charge_card() lines 72-83
-
-        Simulates network timeout on first attempt (retryable).
+        **Rust Reference**: charge_card() lines 37-44
         """
         await asyncio.sleep(0.1)
-
         if should_fail:
-            print("  [Payment] Network error (will retry)")
             raise Exception("NetworkTimeout")
-
-        print("  [Payment] Card charged successfully")
 
 
 @dataclass
 @flow_type(invokable=str)
 class ShippingFlow:
-    """
-    Shipping arrangement child flow with timer.
-
-    **Rust Reference**: ShippingFlow in comprehensive_demo.rs lines 86-114
-
-    Features:
-    - Timer-based warehouse delay
-    - Invokable by parent flow
-    - Returns tracking ID (str)
-    """
+    """Shipping arrangement child flow (no logging)."""
 
     order_id: str
     address: str
@@ -123,13 +84,9 @@ class ShippingFlow:
         """
         Arrange shipping with warehouse preparation delay.
 
-        **Rust Reference**: process() lines 94-105
+        **Rust Reference**: process() lines 56-59
         """
-        print(f"  [Shipping] Preparing shipment to {self.address} for order {self.order_id}")
-
-        # Timer: Wait for warehouse to prepare package
         await self.prepare_package()
-
         return f"TRACK-{uuid.uuid4().hex[:8]}"
 
     @step
@@ -137,17 +94,13 @@ class ShippingFlow:
         """
         Wait for warehouse package preparation.
 
-        **Rust Reference**: prepare_package() lines 107-113
-
-        Uses durable timer for 2-second delay.
+        **Rust Reference**: prepare_package() lines 61-65
         """
-        print("  [Shipping] Waiting for warehouse (2s delay)...")
         await schedule_timer_named(2.0, "warehouse-prep")
-        print("  [Shipping] Package prepared and labeled")
 
 
 # ============================================================================
-# MAIN FLOW: DAG, child invocations, event-driven completion
+# MAIN FLOW
 # ============================================================================
 
 
@@ -162,81 +115,71 @@ class ValidationResult:
 
 @dataclass
 class OrderReceipt:
-    """Final order receipt."""
+    """
+    Final order receipt with versioning information.
+
+    **Rust Reference**: OrderReceipt lines 170-178
+    """
 
     order_id: str
+    flow_id: str
     payment_id: str
     tracking_id: str
     status: str
+    version: str
 
 
 @dataclass
 @flow_type
 class OrderFlow:
     """
-    Main order processing flow.
+    Main order processing flow with versioning.
 
-    **Rust Reference**: OrderFlow in comprehensive_demo.rs lines 120-232
-
-    Orchestrates:
-    - Parallel validation (DAG)
-    - Child flow invocations (payment, shipping)
-    - Timer-based fraud check
+    **Rust Reference**: OrderFlow in comprehensive_demo_3.rs lines 68-161
     """
 
     order_id: str
     customer_id: str
     amount: float
     address: str
+    version: str
+    flow_id: str
 
     @flow
     async def process(self) -> OrderReceipt:
         """
-        Process order with validations and child flows.
+        Process order (no logging).
 
-        **Rust Reference**: process() lines 129-168
+        **Rust Reference**: process() lines 80-107
         """
-        print(f"\n[Order {self.order_id}] Starting processing")
-
         # Run parallel validations (DAG)
-        validation = await self.run_validations()
-        print(f"[Order {self.order_id}] Validations complete: {validation}")
+        await self.run_validations()
 
         # Invoke payment child flow
-        print("  [Order] Invoking payment child flow...")
         payment_pending = self.invoke(PaymentFlow(order_id=self.order_id, amount=self.amount))
         payment_id = await payment_pending.result()
-        print(f"  [Order] Payment completed: {payment_id}")
 
         # Invoke shipping child flow
-        print("  [Order] Invoking shipping child flow...")
         shipping_pending = self.invoke(ShippingFlow(order_id=self.order_id, address=self.address))
         tracking_id = await shipping_pending.result()
-        print(f"  [Order] Shipping arranged: {tracking_id}")
 
-        receipt = OrderReceipt(
+        return OrderReceipt(
             order_id=self.order_id,
+            flow_id=self.flow_id,
             payment_id=payment_id,
             tracking_id=tracking_id,
             status="CONFIRMED",
+            version=self.version,
         )
-
-        print(f"[Order {self.order_id}] Complete! Receipt: {receipt}")
-        return receipt
 
     async def run_validations(self) -> ValidationResult:
         """
         Run parallel validations using DAG execution.
 
-        **Rust Reference**: run_validations() lines 170-177
-
-        Executes customer, inventory, and fraud checks in parallel,
-        then aggregates results.
+        **Rust Reference**: run_validations() lines 109-116
         """
-        # Import DAG runtime
         from pyergon.executor.dag_runtime import dag
 
-        # Execute DAG with parallel validation steps
         return await dag(self, final_step="aggregate_validations")
 
     @step
@@ -244,15 +187,11 @@ class OrderFlow:
         """
         Validate customer eligibility.
 
-        **Rust Reference**: validate_customer() lines 179-190
+        **Rust Reference**: validate_customer() lines 118-125
         """
-        print(f"  [Validation] Checking customer {self.customer_id}...")
         await asyncio.sleep(0.1)
-
         if self.customer_id.startswith("BLOCKED_"):
             raise Exception("CustomerBlocked")
-
-        print("  [Validation] Customer valid")
         return True
 
     @step
@@ -260,11 +199,9 @@ class OrderFlow:
         """
         Check inventory availability.
 
-        **Rust Reference**: check_inventory() lines 192-198
+        **Rust Reference**: check_inventory() lines 127-131
         """
-        print("  [Validation] Checking inventory...")
         await asyncio.sleep(0.1)
-        print("  [Validation] Inventory available")
         return True
 
     @step
@@ -272,13 +209,9 @@ class OrderFlow:
         """
         Run fraud check with timer delay.
 
-        **Rust Reference**: check_fraud() lines 200-208
-
-        Uses 1-second durable timer for fraud analysis delay.
+        **Rust Reference**: check_fraud() lines 133-139
         """
-        print("  [Validation] Running fraud check (1s delay)...")
         await schedule_timer_named(1.0, "fraud-check")
-        print("  [Validation] Fraud check passed")
         return True
 
     @step(
@@ -295,12 +228,8 @@ class OrderFlow:
         """
         Aggregate parallel validation results.
 
-        **Rust Reference**: aggregate_validations() lines 210-231
-
-        Depends on: validate_customer, check_inventory, check_fraud
+        **Rust Reference**: aggregate_validations() lines 141-160
         """
-        print("  [Validation] Aggregating results...")
-
         if not customer or not inventory or not fraud:
             raise Exception("ValidationFailed")
 
@@ -316,17 +245,14 @@ class OrderFlow:
 
 async def main():
     """
-    Run comprehensive demo.
+    Run comprehensive demo with versioning.
 
-    **Rust Reference**: main() lines 253-374
+    **Rust Reference**: main() lines 181-269
     """
-    print("=== COMPREHENSIVE ERGON DEMO ===\n")
-
     # Initialize storage
-    storage = SqliteExecutionLog("data/comprehensive.db")
+    storage = SqliteExecutionLog("data/comprehensive_demo_3.db")
     await storage.connect()
     await storage.reset()
-    scheduler = Scheduler(storage).unversioned()
 
     # Start 3 workers with timer support
     worker_handles = []
@@ -340,68 +266,94 @@ async def main():
         )
 
         # Register all flow types
-        # **Rust Reference**: Lines 269-271
+        # **Rust Reference**: Lines 192-194
         await worker.register(OrderFlow)
         await worker.register(PaymentFlow)
         await worker.register(ShippingFlow)
 
         handle = await worker.start()
         worker_handles.append(handle)
-        print(f"[Setup] Worker {i} started")
 
-    print("\n[Setup] Scheduling orders...\n")
-
-    # Schedule orders
+    # Schedule orders with different versions
+    # **Rust Reference**: Lines 199-218
     orders = [
-        OrderFlow(
-            order_id="ORDER-001", customer_id="CUST-123", amount=99.99, address="123 Main St"
-        ),
-        OrderFlow(
-            order_id="ORDER-002", customer_id="CUST-456", amount=149.50, address="456 Oak Ave"
-        ),
+        ("ORDER-001", "CUST-123", 99.99, "123 Main St", "v1.0"),
+        ("ORDER-002", "CUST-456", 149.50, "456 Oak Ave", "v2.0"),
     ]
 
-    task_ids: list[uuid.UUID] = []
-    for order in orders:
-        task_id = await scheduler.schedule(order)
-        task_ids.append(task_id)
-        print(f"[Client] Scheduled {order.order_id}, task_id={task_id}")
+    task_ids: list[tuple[str, str]] = []
+    for order_id, customer_id, amount, address, version in orders:
+        flow_id = uuid.uuid4()
+        order = OrderFlow(
+            order_id=order_id,
+            customer_id=customer_id,
+            amount=amount,
+            address=address,
+            version=version,
+            flow_id=str(flow_id),
+        )
 
-    print("\n[Client] Waiting for completion...\n")
+        # Create scheduler with version
+        scheduler = Scheduler(storage).with_version(version)
+        task_id = await scheduler.schedule(order, flow_id=str(flow_id))
+        task_ids.append((task_id, version))
 
-    # Poll-based waiting (event notification not yet implemented in Python)
+    # Event-driven waiting using status_notify()
+    # **Rust Reference**: Lines 220-239
+    status_notify = storage.status_notify()
     timeout = 30.0
-    start_time = asyncio.get_event_loop().time()
 
-    while asyncio.get_event_loop().time() - start_time < timeout:
+    try:
+        await asyncio.wait_for(
+            _wait_for_completion(storage, task_ids, status_notify), timeout=timeout
+        )
+    except TimeoutError:
+        print("[Warning] Timeout waiting for flows to complete")
+
+    # Print final results
+    # **Rust Reference**: Lines 241-261
+    await _print_results(storage, task_ids)
+
+    # Shutdown workers
+    # **Rust Reference**: Lines 263-266
+    for handle in worker_handles:
+        await handle.shutdown()
+
+    await storage.close()
+
+
+async def _wait_for_completion(
+    storage, task_ids: list[tuple[str, str]], status_notify: asyncio.Event
+):
+    """
+    Wait for all flows to complete using event-driven notifications.
+
+    **Rust Reference**: comprehensive_demo_3.rs lines 221-239
+    """
+    while True:
         all_complete = True
 
-        for task_id in task_ids:
+        for task_id, _ in task_ids:
             task = await storage.get_scheduled_flow(task_id)
             if task:
-                if task.status == TaskStatus.FAILED:
-                    print(f"[Client] Flow {task_id} failed: {task.error_message}")
-                elif task.status != TaskStatus.COMPLETE:
+                if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
                     all_complete = False
+                    break
 
         if all_complete:
             break
 
-        await asyncio.sleep(0.2)
+        # Wait for status change notification
+        await status_notify.wait()
+        status_notify.clear()  # Reset for next notification
 
-    print("\n[Client] All orders complete!")
-    print("\n=== FINAL RESULTS ===\n")
 
-    # Print final results
-    for task_id in task_ids:
+async def _print_results(storage, task_ids: list[tuple[str, str]]):
+    """Print final results for all tasks."""
+    for task_id, _ in task_ids:
         task = await storage.get_scheduled_flow(task_id)
         if task:
-            print(f"Task: {task_id}")
-            print(f"  Status: {task.status}")
-            print(f"  Retry Count: {task.retry_count}")
-
-            if task.error_message:
-                print(f"  Error: {task.error_message}")
+            print(f"{task_id}: {task.status} (retries: {task.retry_count})")
 
             # Try to get result from invocation
             inv = await storage.get_invocation(task.flow_id, 0)
@@ -411,19 +363,9 @@ async def main():
                 try:
                     result = pickle.loads(inv.return_value)
                     if isinstance(result, OrderReceipt):
-                        print(f"  Receipt: {result}")
+                        print(f"  {result}")
                 except Exception as e:
-                    print(f"  Could not deserialize result: {e}")
-
-            print()
-
-    # Shutdown workers
-    for i, handle in enumerate(worker_handles):
-        await handle.shutdown()
-        print(f"[Cleanup] Worker {i + 1} stopped")
-
-    await storage.close()
-    print("[Cleanup] Storage closed")
+                    print(f"  error: {e}")
 
 
 if __name__ == "__main__":

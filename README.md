@@ -1,40 +1,59 @@
-# PyErgon - Durable Execution Framework for Python
+# PyErgon
 
-Pure Python implementation of durable execution with Temporal-like semantics.
+[![PyPI version](https://badge.fury.io/py/pyergon.svg)](https://pypi.org/project/pyergon/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-## Features
+A minimal durable execution framework for Python, based on SQLite and Redis.
 
-- **Durable Steps**: Automatically cached and retried on failure
-- **Durable Timers**: Event-driven timers survive process restarts
-- **Distributed Workers**: Multiple workers process flows from shared queue
-- **Event-Driven Architecture**: Workers wake on events (new work, timer expiry, new timer)
-- **Storage Backends**: SQLite, Redis, and in-memory implementations
+PyErgon stores method invocations in a database. When restarting a flow after a failure (e.g., machine crash), it resumes from the last successful step, driving it to completion. Flows can suspend awaiting external signals (human approval, webhook callbacks) or timers, and automatically resume when ready.
 
-## Design Philosophy
+**Website**: https://github.com/richinex/pyergon
+**Documentation**: https://github.com/richinex/pyergon
+**Source code**: https://github.com/richinex/pyergon
+**Bug reports**: https://github.com/richinex/pyergon/issues
 
-PyErgon follows practical software engineering principles:
+## What is PyErgon?
 
-- Simple, readable code over clever abstractions
-- Clear naming without cryptic abbreviations
-- Explicit dependencies and no global state
-- Errors handled once at the appropriate level
-- Type hints and protocols for structural typing
-- Composable components with focused responsibilities
+PyErgon is a durable execution framework that:
+
+- **Survives crashes**: Flows resume from last successful step after machine/process failures
+- **Suspends awaiting signals**: Flows pause for external events (approvals, webhooks) and automatically resume
+- **Caches expensive steps**: Completed steps never re-execute on retry
+- **Scales horizontally**: Multiple workers process flows from shared queue (SQLite or Redis)
+- **Supports complex orchestration**: Child flows, parallel DAG execution, timers, retry policies
+
+It provides:
+
+- `@flow` and `@step` decorators for durable workflows
+- Storage backends (SQLite, Redis, in-memory)
+- Automatic retry with exponential backoff
+- External signal coordination
+- Event-driven worker architecture
+- Type-safe APIs with protocols
 
 ## Installation
 
-```bash
-# Clone repository
-git clone <repo-url>
-cd pyergon
+### From PyPI (Recommended)
 
-# Install dependencies with uv
-uv sync
+```bash
+pip install pyergon
 ```
 
-**Dependencies:**
-- Python 3.11+
-- aiosqlite >= 0.19.0
+Requires Python 3.11 or higher.
+
+### From Source
+
+```bash
+# Clone repository
+git clone https://github.com/richinex/pyergon.git
+cd pyergon
+
+# Install with uv
+uv sync
+
+# Or with pip
+pip install -e .
+```
 
 ## Quick Start
 
@@ -138,6 +157,127 @@ async def main():
 asyncio.run(main())
 ```
 
+## Advanced Features
+
+### Waiting for External Signals ("Human in the Loop")
+
+Flows can suspend awaiting external signals (approvals, webhooks, callbacks):
+
+```python
+from pyergon.executor.signal import await_external_signal
+
+@dataclass
+@flow_type
+class DocumentApprovalFlow:
+    document_id: str
+
+    @flow
+    async def process(self):
+        await self.validate_document()
+
+        # Suspend until manager approves
+        decision = await self.await_manager_approval()
+
+        if not decision.approved:
+            raise ManagerRejectionError(decision.reason)
+
+        await self.publish_document()
+        return "approved"
+
+    @step
+    async def await_manager_approval(self):
+        signal_name = f"manager_approval_{self.document_id}"
+        decision_bytes = await await_external_signal(signal_name)
+        return pickle.loads(decision_bytes)
+```
+
+Resume the flow externally:
+
+```python
+worker = Worker(storage, "worker-1")
+worker = worker.with_signals(signal_source, poll_interval=0.5)
+await worker.register(DocumentApprovalFlow)
+await worker.start()
+
+# Later, from webhook or API:
+await signal_source.send_signal("manager_approval_DOC-001", decision_data)
+```
+
+### Child Flow Invocation
+
+Parent flows can invoke child flows and await their results:
+
+```python
+@dataclass
+@flow_type(invokable=str)
+class PaymentFlow:
+    order_id: str
+    amount: float
+
+    @flow(retry_policy=RetryPolicy.STANDARD)
+    async def process(self):
+        await self.charge_card()
+        return f"PAYMENT-{self.order_id}"
+
+@dataclass
+@flow_type
+class OrderFlow:
+    order_id: str
+    amount: float
+
+    @flow
+    async def process(self):
+        await self.validate_order()
+
+        # Invoke child flow and await result
+        payment_flow = PaymentFlow(self.order_id, self.amount)
+        payment_id = await self.invoke(payment_flow).result()
+
+        return f"Order complete: {payment_id}"
+```
+
+### Retry Policies
+
+Control retry behavior for transient vs permanent errors:
+
+```python
+class ApiTimeoutError(RetryableError):
+    def is_retryable(self) -> bool:
+        return True  # Will be retried
+
+class ItemNotFoundError(RetryableError):
+    def is_retryable(self) -> bool:
+        return False  # Fails immediately
+
+@flow(retry_policy=RetryPolicy.STANDARD)
+async def process_order(self):
+    await self.check_inventory()  # Retries on ApiTimeoutError
+    await self.process_payment()   # Fails fast on ItemNotFoundError
+```
+
+## Examples
+
+Complete examples in `examples/` directory:
+
+| Example | Demonstrates |
+|---------|-------------|
+| `comprehensive_demo.py` | Full orchestration with versioning, child flows, DAG execution |
+| `external_signal_abstraction.py` | Document approval workflow with external signals |
+| `nested_flows.py` | Parent-child flow execution patterns |
+| `retryable_error_proof.py` | Sophisticated retry behavior |
+| `numpy_computation_pipeline.py` | Scientific computing pipeline with step caching |
+| `concurrent_segmented_sieve.py` | Performance benchmarks with parallel workers |
+
+Run examples:
+
+```bash
+# From PyPI installation
+python examples/comprehensive_demo.py
+
+# From source
+PYTHONPATH=src python examples/comprehensive_demo.py
+```
+
 ## Architecture
 
 ### Core Components
@@ -163,14 +303,6 @@ asyncio.run(main())
    - `@flow_type`: Mark workflow class
    - `@flow`: Mark flow entry point method
    - `@step`: Mark durable step method
-
-## Examples
-
-See `examples/` directory for complete examples:
-
-```bash
-PYTHONPATH=src uv run python examples/simple_timer_sqlite.py
-```
 
 ## Testing
 

@@ -4,7 +4,7 @@ This directory contains modern CI/CD workflows for the PyErgon project following
 
 ## Workflows
 
-### 🔧 CI Workflow (`ci.yml`)
+### CI Workflow (`ci.yml`)
 
 Runs on every push and pull request to main/develop branches.
 
@@ -19,13 +19,13 @@ Runs on every push and pull request to main/develop branches.
 - **Build**: Package building and validation
 
 **Features:**
-- ✅ Concurrency control (cancels outdated runs)
-- ✅ uv caching for fast dependency installation
-- ✅ Matrix testing across Python versions
-- ✅ Redis service container for integration tests
-- ✅ Artifact upload for build outputs
+- Concurrency control (cancels outdated runs)
+- uv caching for fast dependency installation
+- Matrix testing across Python versions
+- Redis service container for integration tests
+- Artifact upload for build outputs
 
-### 📦 Publish Workflow (`publish.yml`)
+### Publish Workflow (`publish.yml`)
 
 Deploys packages to PyPI using trusted publishing (no credentials needed).
 
@@ -40,12 +40,12 @@ Deploys packages to PyPI using trusted publishing (no credentials needed).
 - **GitHub Release**: Signs distributions and uploads to GitHub release
 
 **Features:**
-- ✅ Trusted publishing (OIDC authentication)
-- ✅ Sigstore signing for supply chain security
-- ✅ Manual deployment option for testing
-- ✅ Artifact preservation across jobs
+- Trusted publishing (OIDC authentication)
+- Sigstore signing for supply chain security
+- Manual deployment option for testing
+- Artifact preservation across jobs
 
-### 🔒 CodeQL Security Scan (`codeql.yml`)
+### CodeQL Security Scan (`codeql.yml`)
 
 Automated security vulnerability scanning.
 
@@ -54,18 +54,18 @@ Automated security vulnerability scanning.
 - Weekly schedule (Mondays at midnight UTC)
 
 **Features:**
-- ✅ GitHub Advanced Security integration
-- ✅ Security-and-quality query pack
-- ✅ Automated vulnerability detection
+- GitHub Advanced Security integration
+- Security-and-quality query pack
+- Automated vulnerability detection
 
-### 📊 Dependency Review (`dependency-review.yml`)
+### Dependency Review (`dependency-review.yml`)
 
 Reviews dependency changes in pull requests.
 
 **Features:**
-- ✅ Automatic PR comments with dependency analysis
-- ✅ Fails on moderate+ severity vulnerabilities
-- ✅ License compliance checking
+- Automatic PR comments with dependency analysis
+- Fails on moderate+ severity vulnerabilities
+- License compliance checking
 
 ## Dependabot Configuration
 
@@ -83,7 +83,7 @@ Based on research from:
 - [uv GitHub Actions Guide](https://docs.astral.sh/uv/guides/integration/github/)
 - [CI/CD Optimization Guide](https://medium.com/@george_bakas/optimizing-your-ci-cd-github-actions-a-comprehensive-guide-f25ea95fd494)
 
-### ✅ Performance Optimizations
+### Performance Optimizations
 
 1. **Smart Caching**
    - uv cache with `cache-dependency-glob: "uv.lock"`
@@ -98,7 +98,7 @@ Based on research from:
    - Lint, typecheck, and security run independently
    - Matrix strategy for multi-version testing
 
-### ✅ Security Best Practices
+### Security Best Practices
 
 1. **Trusted Publishing**
    - No PyPI tokens in secrets
@@ -118,7 +118,7 @@ Based on research from:
    - Minimal permissions per job
    - Read-only by default
 
-### ✅ Code Quality
+### Code Quality
 
 1. **Multi-stage Linting**
    - Ruff for style + formatting
@@ -130,7 +130,7 @@ Based on research from:
    - Integration tests with services (Redis)
    - Coverage tracking and reporting
 
-### ✅ Modern Tooling
+### Modern Tooling
 
 1. **uv Package Manager**
    - Blazing fast Rust-based tool
