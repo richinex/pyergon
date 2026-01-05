@@ -116,6 +116,7 @@ class PendingChild(Generic[R]):
 
         # Compute params_hash from child data for non-determinism detection
         import xxhash
+
         params_hash = xxhash.xxh64(self.child_bytes).intdigest() & 0x7FFFFFFFFFFFFFFF
 
         await ctx.log_step_start(

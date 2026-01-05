@@ -347,8 +347,7 @@ class Worker:
                     if self._supports_work_notifications:
                         try:
                             await asyncio.wait_for(
-                                self._work_notify.wait(),
-                                timeout=self._poll_interval_with_jitter
+                                self._work_notify.wait(), timeout=self._poll_interval_with_jitter
                             )
                             self._work_notify.clear()
                         except TimeoutError:
@@ -519,7 +518,7 @@ class Worker:
         if next_timer_wake is None:
             # No timers - sleep forever (will be cancelled when timer notification arrives)
             # This matches Rust's std::future::pending()
-            await asyncio.sleep(float('inf'))
+            await asyncio.sleep(float("inf"))
         else:
             # Calculate sleep duration
             now = datetime.now()
