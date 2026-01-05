@@ -338,5 +338,5 @@ MIT / Apache 2.0 (dual license)
 ## Credits
 
 Inspired by:
-- [Temporal](https://temporal.io/) - Durable execution engine
+- [Persistasaurus](https://www.morling.dev/blog/building-durable-execution-engine-with-sqlite/) - Durable execution engine
 - [Dave Cheney](https://dave.cheney.net/) - Practical Go principles
