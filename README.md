@@ -7,8 +7,6 @@ A minimal durable execution framework for Python, based on SQLite and Redis.
 
 PyErgon stores method invocations in a database. When restarting a flow after a failure (e.g., machine crash), it resumes from the last successful step, driving it to completion. Flows can suspend awaiting external signals (human approval, webhook callbacks) or timers, and automatically resume when ready.
 
-**Website**: https://github.com/richinex/pyergon
-**Documentation**: https://github.com/richinex/pyergon
 **Source code**: https://github.com/richinex/pyergon
 **Bug reports**: https://github.com/richinex/pyergon/issues
 
@@ -19,13 +17,12 @@ PyErgon is a durable execution framework that:
 - **Survives crashes**: Flows resume from last successful step after machine/process failures
 - **Suspends awaiting signals**: Flows pause for external events (approvals, webhooks) and automatically resume
 - **Caches expensive steps**: Completed steps never re-execute on retry
-- **Scales horizontally**: Multiple workers process flows from shared queue (SQLite or Redis)
+- **Multiple backends**: InMemory, SQLite or Redis
 - **Supports complex orchestration**: Child flows, parallel DAG execution, timers, retry policies
 
 It provides:
 
 - `@flow` and `@step` decorators for durable workflows
-- Storage backends (SQLite, Redis, in-memory)
 - Automatic retry with exponential backoff
 - External signal coordination
 - Event-driven worker architecture
@@ -266,7 +263,7 @@ Complete examples in `examples/` directory:
 | `nested_flows.py` | Parent-child flow execution patterns |
 | `retryable_error_proof.py` | Sophisticated retry behavior |
 | `numpy_computation_pipeline.py` | Scientific computing pipeline with step caching |
-| `concurrent_segmented_sieve.py` | Performance benchmarks with parallel workers |
+
 
 Run examples:
 
