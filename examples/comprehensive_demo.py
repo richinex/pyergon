@@ -257,12 +257,10 @@ async def main():
     # Start 3 workers with timer support
     worker_handles = []
     for i in range(1, 4):
-        worker = Worker(
-            storage=storage,
-            worker_id=f"worker-{i}",
-            enable_timers=True,
-            poll_interval=0.1,
-            timer_interval=0.05,
+        worker = (
+            Worker(storage=storage, worker_id=f"worker-{i}")
+            .with_timers(interval=0.05)
+            .with_poll_interval(0.1)
         )
 
         # Register all flow types

@@ -158,37 +158,39 @@ class Worker:
         self,
         storage: ExecutionLog,
         worker_id: str,
-        enable_timers: bool = False,
-        poll_interval: float = 1.0,
-        timer_interval: float = 0.1,
-        max_retries: int = 3,
-        backoff_base: float = 2.0,
     ):
         """Initialize worker with storage backend.
 
         All dependencies passed explicitly, no globals.
 
+        Use builder methods to configure the worker:
+        - worker.with_timers(interval) to enable timer processing
+        - worker.with_signals(source, poll_interval) to enable signal processing
+        - worker.with_poll_interval(interval) to set polling interval
+
         Args:
             storage: Storage backend for persistence
             worker_id: Unique worker identifier
-            enable_timers: Whether to process timers
-            poll_interval: Seconds between queue polls
-            timer_interval: Seconds between timer checks
-            max_retries: Maximum retry attempts before marking as FAILED
-            backoff_base: Base for exponential backoff (delay = base^retry_count)
+
+        Example:
+            ```python
+            worker = Worker(storage, "worker-1")
+                .with_timers()
+                .with_poll_interval(0.1)
+            ```
         """
         self._storage = storage
         self._worker_id = worker_id
-        self._enable_timers = enable_timers
-        self._poll_interval = poll_interval
-        self._timer_interval = timer_interval
-        self._max_retries = max_retries
-        self._backoff_base = backoff_base
+        self._enable_timers = False  # Default disabled, use with_timers()
+        self._poll_interval = 1.0  # Default 1s, can override with with_poll_interval()
+        self._timer_interval = 0.1  # Default, can override with with_timers(interval)
+        self._max_retries = 3  # Default max retries
+        self._backoff_base = 2.0  # Default backoff base
 
         # Add jitter to poll interval to avoid thundering herd
         worker_hash = sum(ord(c) for c in worker_id)
         jitter_ms = 1 + (worker_hash % 5)
-        self._poll_interval_with_jitter = poll_interval + (jitter_ms / 1000.0)
+        self._poll_interval_with_jitter = self._poll_interval + (jitter_ms / 1000.0)
 
         self._signal_source: Any | None = None
         self._signal_poll_interval: float = 0.5

@@ -272,11 +272,8 @@ async def main():
     # 3. Spawn 4 workers
     workers = []
     for i in range(4):
-        worker = Worker(
-            storage=storage,
-            worker_id=f"worker-{i}",
-            enable_timers=False,
-            poll_interval=0.05,  # 50ms aggressive polling for high concurrency
+        worker = Worker(storage=storage, worker_id=f"worker-{i}").with_poll_interval(
+            0.05  # 50ms aggressive polling for high concurrency
         )
 
         await worker.register(OrderFlow)

@@ -66,7 +66,7 @@ async def main():
 
     # Create scheduler and worker
     scheduler = Scheduler(storage).with_version("v1.0")
-    worker = Worker(storage, "worker", enable_timers=True)
+    worker = Worker(storage, "worker").with_timers()
     await worker.register(TimedTask)
     handle = await worker.start()
 

@@ -160,13 +160,13 @@ async def main():
     storage = InMemoryExecutionLog()
 
     # Start worker 1 with timer processing enabled
-    worker1 = Worker(storage, "worker-1", enable_timers=True, poll_interval=0.1)
+    worker1 = Worker(storage, "worker-1").with_timers().with_poll_interval(0.1)
     await worker1.register(TimedOrderProcessor)
     await worker1.register(TrialExpiryNotification)
     handle1 = await worker1.start()
 
     # Start worker 2 with timer processing enabled
-    worker2 = Worker(storage, "worker-2", enable_timers=True, poll_interval=0.1)
+    worker2 = Worker(storage, "worker-2").with_timers().with_poll_interval(0.1)
     await worker2.register(TimedOrderProcessor)
     await worker2.register(TrialExpiryNotification)
     handle2 = await worker2.start()

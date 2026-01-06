@@ -117,6 +117,7 @@ class ChildTask:
         print("  [CHILD] Task succeeded!")
         return "Success"
 
+
 # =============================================================================
 # Parent Flow
 # =============================================================================
@@ -139,9 +140,7 @@ class ParentTask:
         """
         # Invoke child and wait for result
         try:
-            child_result = await self.invoke(
-                ChildTask(should_fail=self.child_should_fail)
-            ).result()
+            child_result = await self.invoke(ChildTask(should_fail=self.child_should_fail)).result()
 
             # All logging AFTER the await
             print(f"[PARENT] {self.test_name} - Child succeeded: {child_result}")
@@ -194,6 +193,7 @@ async def wait_for_completion(
 async def main():
     """Run the timer + child flow + error test."""
     import sys
+
     print("[MAIN] Starting timer_child_minimal test...", file=sys.stderr, flush=True)
     storage = SqliteExecutionLog("data/timer_child_minimal.db")
     print("[MAIN] Created storage")
@@ -203,7 +203,7 @@ async def main():
     print("[MAIN] Reset storage")
 
     # Create worker with timers enabled
-    worker = Worker(storage, "test-worker", enable_timers=True, poll_interval=0.05)
+    worker = Worker(storage, "test-worker").with_timers().with_poll_interval(0.05)
     print("[MAIN] Created worker")
     await worker.register(ParentTask)
     print("[MAIN] Registered ParentTask")
@@ -239,10 +239,7 @@ async def main():
         f"Test1 (should succeed): {status1} - "
         f"{'PASS' if status1 == TaskStatus.COMPLETE else 'FAIL'}"
     )
-    print(
-        f"Test2 (should fail): {status2} - "
-        f"{'PASS' if status2 == TaskStatus.FAILED else 'FAIL'}"
-    )
+    print(f"Test2 (should fail): {status2} - {'PASS' if status2 == TaskStatus.FAILED else 'FAIL'}")
 
     await worker_handle.shutdown()
     await storage.close()
