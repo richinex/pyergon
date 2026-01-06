@@ -91,6 +91,7 @@ class SqliteExecutionLog(ExecutionLog):
             return "SqliteExecutionLog(in-memory)"
         return f"SqliteExecutionLog({self.db_path})"
 
+
     async def connect(self) -> None:
         """Open database connection and initialize schema.
 
@@ -98,6 +99,10 @@ class SqliteExecutionLog(ExecutionLog):
 
         Pattern: Template Method
         Fixed initialization sequence:
+
+        Note: The connection will be automatically closed when the event loop shuts down
+        via weakref finalizer. However, explicit close() is still recommended for
+        predictable resource cleanup.
         1. Open connection
         2. Enable WAL mode
         3. Create tables

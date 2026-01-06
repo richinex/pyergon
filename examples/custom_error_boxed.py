@@ -243,7 +243,7 @@ async def main():
     await storage.connect()
     await storage.reset()
 
-    worker = Worker(storage, "worker-1", poll_interval=0.1)
+    worker = Worker(storage, "worker-1").with_poll_interval(0.1)
     await worker.register(PaymentFlow)
     await worker.register(ShippingFlow)
     worker_handle = await worker.start()

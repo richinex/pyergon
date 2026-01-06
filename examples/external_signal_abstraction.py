@@ -219,7 +219,11 @@ async def main():
     )
     task_id_2 = await scheduler.schedule(DocumentApprovalFlow(submission=doc2))
 
-    worker = Worker(storage, "document-processor").with_signals(signal_source, poll_interval=0.5)
+    worker = (
+        Worker(storage, "document-processor")
+        .with_signals(signal_source)
+        .with_signal_interval(0.5)
+    )
     await worker.register(DocumentApprovalFlow)
     handle = await worker.start()
 

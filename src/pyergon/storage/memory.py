@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any
 
 from uuid_extensions import uuid7
 
@@ -48,6 +49,12 @@ class InMemoryExecutionLog(ExecutionLog):
         # Storage: {task_id: ScheduledFlow}
         self._scheduled_flows: dict[str, ScheduledFlow] = {}
 
+        # Index: {flow_id: task_id} for fast O(1) lookup during resume
+        self._flow_task_map: dict[str, str] = {}
+
+        # Queue: task_id (FIFO queue for pending tasks, matches Rust mpsc channel)
+        self._pending_queue: asyncio.Queue[str] = asyncio.Queue()
+
         # Storage: {(flow_id, step, suspension_key): bytes}
         # For storing suspension results (timer/signal completions)
         self._suspension_results: dict[tuple[str, int, str], bytes] = {}
@@ -75,13 +82,7 @@ class InMemoryExecutionLog(ExecutionLog):
         delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
-        """Record the start of a step execution.
-
-        This method checks if an invocation already exists:
-        - If COMPLETE: skip, don't overwrite cached result
-        - If WAITING_FOR_SIGNAL: skip, don't overwrite signal state
-        - Otherwise: overwrite with new invocation
-        """
+        """Record the start of a step execution."""
         async with self._lock:
             key = (flow_id, step)
 
@@ -222,77 +223,89 @@ class InMemoryExecutionLog(ExecutionLog):
     async def enqueue_flow(self, flow: ScheduledFlow) -> str:
         """Add a flow to the distributed work queue.
 
-        Accepts a complete ScheduledFlow object which includes parent_metadata
-        for child flow invocation.
+        Accepts a complete ScheduledFlow object.
         """
         async with self._lock:
-            # Store the flow object directly
-            # The flow object already contains all necessary fields including parent_metadata
             self._scheduled_flows[flow.task_id] = flow
+            self._flow_task_map[flow.flow_id] = flow.task_id
 
-            # Wake up one waiting worker if this is an immediate (non-delayed) flow
-            if flow.scheduled_for is None:
-                self._work_notify.set()
-                self._work_notify.clear()  # Reset for next notification
+            # Add to FIFO queue (matches Rust channel)
+            self._pending_queue.put_nowait(flow.task_id)
+
+            # Notify workers
+            # NOTE: We do NOT clear the event here. The worker clears it upon waking.
+            # If we clear it here, a race condition exists where the signal is lost.
+            self._work_notify.set()
 
             return flow.task_id
 
     async def dequeue_flow(self, worker_id: str) -> ScheduledFlow | None:
         """Claim and retrieve a pending flow from queue.
 
-        Only dequeues flows that are:
-        1. Status == PENDING
-        2. scheduled_for is None OR scheduled_for <= now (ready to execute)
+        Uses FIFO queue for O(1) access and fairness.
+        Implements daisy-chain notification: if queue is not empty after dequeue,
+        wake up other workers.
         """
         async with self._lock:
+            try:
+                # Try to get task_id from queue
+                # We consume items until we find a valid one or queue is empty
+                # In a real scenario with proper dequeuing, we shouldn't have many invalid items
+                task_id = self._pending_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return None
+
+            # Daisy-chain: If there are more items, ensure other workers wake up
+            if not self._pending_queue.empty():
+                self._work_notify.set()
+
+            if task_id not in self._scheduled_flows:
+                # Task might have been completed/deleted - skip and recurse
+                # (or return None to let worker loop)
+                # For simplicity, we return None and let worker poll again
+                return None
+
+            flow = self._scheduled_flows[task_id]
             now = datetime.now()
 
-            # Find first pending flow that's ready to execute
-            for task_id, flow in self._scheduled_flows.items():
-                if flow.status == TaskStatus.PENDING:
-                    # Check if flow is scheduled for the future
-                    if flow.scheduled_for is not None and flow.scheduled_for > now:
-                        # Not ready yet - skip this flow
-                        continue
+            # Check if flow is valid for execution
+            if flow.status == TaskStatus.PENDING:
+                # Check schedule
+                if flow.scheduled_for is not None and flow.scheduled_for > now:
+                    # Delayed - put back in queue for later
+                    # Note: Simple FIFO queue puts it at the back.
+                    # For strict ordering, a PriorityQueue is better, but this
+                    # matches Rust mpsc behavior.
+                    self._pending_queue.put_nowait(task_id)
+                    return None
 
-                    # Flow is ready - claim it
-                    updated = ScheduledFlow(
-                        task_id=flow.task_id,
-                        flow_id=flow.flow_id,
-                        flow_type=flow.flow_type,
-                        flow_data=flow.flow_data,
-                        status=TaskStatus.RUNNING,
-                        locked_by=worker_id,
-                        retry_count=flow.retry_count,
-                        created_at=flow.created_at,
-                        updated_at=now,
-                        error_message=flow.error_message,
-                        claimed_at=now,
-                        completed_at=flow.completed_at,
-                        scheduled_for=flow.scheduled_for,
-                        parent_metadata=flow.parent_metadata,
-                        retry_policy=flow.retry_policy,
-                    )
-                    self._scheduled_flows[task_id] = updated
-                    return updated
+                # Claim it
+                updated = ScheduledFlow(
+                    task_id=flow.task_id,
+                    flow_id=flow.flow_id,
+                    flow_type=flow.flow_type,
+                    flow_data=flow.flow_data,
+                    status=TaskStatus.RUNNING,
+                    locked_by=worker_id,
+                    retry_count=flow.retry_count,
+                    created_at=flow.created_at,
+                    updated_at=now,
+                    error_message=flow.error_message,
+                    claimed_at=now,
+                    completed_at=flow.completed_at,
+                    scheduled_for=flow.scheduled_for,
+                    parent_metadata=flow.parent_metadata,
+                    retry_policy=flow.retry_policy,
+                )
+                self._scheduled_flows[task_id] = updated
+                return updated
 
             return None
 
     async def complete_flow(
         self, task_id: str, status: TaskStatus, error_message: str | None = None
     ) -> None:
-        """Update flow task status.
-
-        Despite the name "complete_flow", this method updates the status to ANY value,
-        including SUSPENDED (not just terminal states). The name comes from the most
-        common use case (marking flows COMPLETE/FAILED), but it's actually a general
-        status update method.
-
-        Args:
-            task_id: The task identifier
-            status: The final status (COMPLETE, FAILED, or SUSPENDED)
-            error_message: Optional error message if status is FAILED
-        """
+        """Update flow task status."""
         async with self._lock:
             if task_id not in self._scheduled_flows:
                 raise StorageError(f"Flow not found: task_id={task_id}")
@@ -300,7 +313,6 @@ class InMemoryExecutionLog(ExecutionLog):
             flow = self._scheduled_flows[task_id]
             now = datetime.now()
 
-            # Set completed_at only for terminal statuses
             completed_at = now if status.is_terminal else flow.completed_at
 
             updated = ScheduledFlow(
@@ -308,7 +320,7 @@ class InMemoryExecutionLog(ExecutionLog):
                 flow_id=flow.flow_id,
                 flow_type=flow.flow_type,
                 flow_data=flow.flow_data,
-                status=status,  # Accept ANY status (including SUSPENDED)
+                status=status,
                 locked_by=flow.locked_by,
                 retry_count=flow.retry_count,
                 created_at=flow.created_at,
@@ -323,21 +335,12 @@ class InMemoryExecutionLog(ExecutionLog):
 
             self._scheduled_flows[task_id] = updated
 
-            # Notify any waiters that a flow status changed
+            # Notify status listeners
             self._status_notify.set()
-            self._status_notify.clear()  # Reset for next notification
+            self._status_notify.clear()
 
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
-        """Reschedule a failed flow for retry after a delay.
-
-        This method:
-        1. Increments retry_count
-        2. Sets error_message
-        3. Sets status back to PENDING
-        4. Clears locked_by
-        5. Sets scheduled_for (current time + delay)
-        6. Re-enqueues the flow
-        """
+        """Reschedule a failed flow for retry after a delay."""
         async with self._lock:
             if task_id not in self._scheduled_flows:
                 raise StorageError(f"Flow not found: task_id={task_id}")
@@ -346,30 +349,29 @@ class InMemoryExecutionLog(ExecutionLog):
             now = datetime.now()
             scheduled_for = now + delay
 
-            # Update flow for retry
             updated = ScheduledFlow(
                 task_id=flow.task_id,
                 flow_id=flow.flow_id,
                 flow_type=flow.flow_type,
                 flow_data=flow.flow_data,
-                status=TaskStatus.PENDING,  # Back to pending
-                locked_by=None,  # Clear lock
-                retry_count=flow.retry_count + 1,  # Increment
+                status=TaskStatus.PENDING,
+                locked_by=None,
+                retry_count=flow.retry_count + 1,
                 created_at=flow.created_at,
                 updated_at=now,
-                error_message=error_message,  # Set error
+                error_message=error_message,
                 claimed_at=None,
                 completed_at=None,
-                scheduled_for=scheduled_for,  # Schedule for future
+                scheduled_for=scheduled_for,
                 parent_metadata=flow.parent_metadata,
                 retry_policy=flow.retry_policy,
             )
 
             self._scheduled_flows[task_id] = updated
 
-            # Notify workers that new work is available (or will be available soon)
+            # Re-enqueue
+            self._pending_queue.put_nowait(task_id)
             self._work_notify.set()
-            self._work_notify.clear()  # Reset for next notification
 
     async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """Retrieve a scheduled flow by task ID."""
@@ -404,10 +406,8 @@ class InMemoryExecutionLog(ExecutionLog):
                     updated_at=datetime.now(),
                 )
                 self._invocations[key] = updated
-
-                # Notify timer processor that a new timer was scheduled
                 self._timer_notify.set()
-                self._timer_notify.clear()  # Reset for next notification
+                self._timer_notify.clear()
 
     async def get_expired_timers(self, now: datetime) -> list[TimerInfo]:
         """Get all timers that have expired."""
@@ -427,6 +427,8 @@ class InMemoryExecutionLog(ExecutionLog):
                             timer_name=inv.timer_name,
                         )
                     )
+            # Sort by fire_at to handle oldest timers first
+            expired.sort(key=lambda t: t.fire_at)
             return expired
 
     async def claim_timer(self, flow_id: str, step: int) -> bool:
@@ -440,7 +442,6 @@ class InMemoryExecutionLog(ExecutionLog):
             if inv.status != InvocationStatus.WAITING_FOR_TIMER:
                 return False
 
-            # Claim it by changing status to PENDING
             updated = Invocation(
                 id=inv.id,
                 flow_id=inv.flow_id,
@@ -461,17 +462,15 @@ class InMemoryExecutionLog(ExecutionLog):
                 updated_at=datetime.now(),
             )
             self._invocations[key] = updated
-
-            # Notify timer processor that timer was claimed (may need to recalculate next wake time)
             self._timer_notify.set()
-            self._timer_notify.clear()  # Reset for next notification
+            self._timer_notify.clear()
 
             return True
 
     async def store_suspension_result(
         self, flow_id: str, step: int, suspension_key: str, result: bytes
     ) -> None:
-        """Store suspension result data (timer or signal completion)."""
+        """Store suspension result data."""
         async with self._lock:
             key = (flow_id, step, suspension_key)
             self._suspension_results[key] = result
@@ -491,12 +490,7 @@ class InMemoryExecutionLog(ExecutionLog):
             self._suspension_results.pop(key, None)
 
     async def log_signal(self, flow_id: str, step: int, signal_name: str) -> None:
-        """
-        Mark an invocation as waiting for an external signal.
-
-        CRITICAL: This must be called BEFORE scheduling the child flow to prevent
-        race conditions where the child completes before the parent is marked as waiting.
-        """
+        """Mark an invocation as waiting for an external signal."""
         async with self._lock:
             key = (flow_id, step)
             if key not in self._invocations:
@@ -504,7 +498,6 @@ class InMemoryExecutionLog(ExecutionLog):
 
             inv = self._invocations[key]
 
-            # Update invocation status to WAITING_FOR_SIGNAL
             updated = Invocation(
                 id=inv.id,
                 flow_id=inv.flow_id,
@@ -521,44 +514,59 @@ class InMemoryExecutionLog(ExecutionLog):
                 retry_policy=inv.retry_policy,
                 is_retryable=inv.is_retryable,
                 timer_fire_at=inv.timer_fire_at,
-                timer_name=signal_name,  # Store signal name in timer_name field
+                timer_name=signal_name,
                 updated_at=datetime.now(),
             )
             self._invocations[key] = updated
 
+    async def get_waiting_signals(self) -> list[Any]:
+        """Get all flows waiting for signals.
+
+        Returns:
+            List of SignalInfo-like objects (mapped from invocations)
+        """
+        async with self._lock:
+            # We construct ad-hoc objects or dictionaries to match SignalInfo
+            # Since SignalInfo is in models, let's use a simple object or import it if needed.
+            # Assuming callers use .signal_name etc.
+            from pyergon.models import SignalInfo
+
+            signals = []
+            for (flow_id, step), inv in self._invocations.items():
+                if inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
+                    signals.append(
+                        SignalInfo(flow_id=flow_id, step=step, signal_name=inv.timer_name)
+                    )
+            return signals
+
     async def resume_flow(self, flow_id: str) -> bool:
         """Resume a suspended flow by changing status SUSPENDED → PENDING.
 
-        This method atomically:
-        1. Checks if flow is SUSPENDED
-        2. Changes status to PENDING
-        3. Re-enqueues to work queue (adds back to scheduled_flows list)
-
-        Returns:
-            True if flow was resumed, False if not suspended
+        1. O(1) lookup via flow_task_map
+        2. Check if SUSPENDED
+        3. Update to PENDING
+        4. Re-enqueue to pending_queue (Critical for waking worker!)
+        5. Notify
         """
         async with self._lock:
-            # Find the flow's task by flow_id
-            task_to_resume = None
-            task_id_to_resume = None
-            for tid, task in self._scheduled_flows.items():
-                if task.flow_id == flow_id and task.status == TaskStatus.SUSPENDED:
-                    task_to_resume = task
-                    task_id_to_resume = tid
-                    break
-
-            if task_to_resume is None:
-                # Flow not found or not suspended
+            # O(1) lookup
+            task_id = self._flow_task_map.get(flow_id)
+            if not task_id or task_id not in self._scheduled_flows:
                 return False
 
-            # Update status to PENDING
+            task_to_resume = self._scheduled_flows[task_id]
+
+            # Only resume if actually suspended (matches Rust)
+            if task_to_resume.status != TaskStatus.SUSPENDED:
+                return False
+
             updated_task = ScheduledFlow(
                 task_id=task_to_resume.task_id,
                 flow_id=task_to_resume.flow_id,
                 flow_type=task_to_resume.flow_type,
                 flow_data=task_to_resume.flow_data,
-                status=TaskStatus.PENDING,  # Change from SUSPENDED to PENDING
-                locked_by=None,  # Clear lock
+                status=TaskStatus.PENDING,
+                locked_by=None,
                 scheduled_for=task_to_resume.scheduled_for,
                 created_at=task_to_resume.created_at,
                 updated_at=datetime.now(),
@@ -567,75 +575,84 @@ class InMemoryExecutionLog(ExecutionLog):
                 parent_metadata=task_to_resume.parent_metadata,
             )
 
-            # Replace in scheduled_flows dict
-            self._scheduled_flows[task_id_to_resume] = updated_task
+            self._scheduled_flows[task_id] = updated_task
 
-            # Wake up one waiting worker since we just made a flow available
+            # Re-enqueue task to queue (Matches Rust pending_tx.send)
+            self._pending_queue.put_nowait(task_id)
+
+            # Notify workers
             self._work_notify.set()
-            self._work_notify.clear()  # Reset for next notification
 
             return True
 
     async def get_next_timer_fire_time(self) -> datetime | None:
-        """Get the earliest timer fire time across all flows.
-
-        Returns:
-            datetime of next timer, or None if no timers pending
-        """
+        """Get the earliest timer fire time."""
         async with self._lock:
             next_fire_time = None
-
-            # Iterate all invocations looking for timers
             for inv in self._invocations.values():
                 if inv.status == InvocationStatus.WAITING_FOR_TIMER:
                     if inv.timer_fire_at is not None:
-                        if next_fire_time is None:
+                        if next_fire_time is None or inv.timer_fire_at < next_fire_time:
                             next_fire_time = inv.timer_fire_at
-                        elif inv.timer_fire_at < next_fire_time:
-                            next_fire_time = inv.timer_fire_at
-
             return next_fire_time
 
+    async def cleanup_completed(self, older_than: timedelta) -> int:
+        """Clean up old completed flows and invocations (Matches Rust)."""
+        async with self._lock:
+            cutoff = datetime.now() - older_than
+            count = 0
+
+            # Cleanup invocations
+            keys_to_remove = []
+            for key, inv in self._invocations.items():
+                if inv.status == InvocationStatus.COMPLETE and inv.timestamp < cutoff:
+                    keys_to_remove.append(key)
+
+            for key in keys_to_remove:
+                del self._invocations[key]
+                count += 1
+
+            # Cleanup suspension params
+            self._suspension_results.clear()
+
+            # Cleanup flows
+            tasks_to_remove = []
+            for task_id, flow in self._scheduled_flows.items():
+                if (
+                    (flow.status == TaskStatus.COMPLETE or flow.status == TaskStatus.FAILED)
+                    and flow.updated_at < cutoff
+                ):
+                    tasks_to_remove.append(task_id)
+
+            for task_id in tasks_to_remove:
+                flow = self._scheduled_flows[task_id]
+                del self._scheduled_flows[task_id]
+                self._flow_task_map.pop(flow.flow_id, None)
+
+            return count
+
     async def reset(self) -> None:
-        """Clear all data (for testing)."""
+        """Clear all data."""
         async with self._lock:
             self._invocations.clear()
             self._scheduled_flows.clear()
+            self._flow_task_map.clear()
             self._suspension_results.clear()
+            # Clear queue
+            while not self._pending_queue.empty():
+                try:
+                    self._pending_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
     async def close(self) -> None:
-        """Close storage (no-op for in-memory)."""
         pass
 
     def work_notify(self) -> asyncio.Event:
-        """Return event for work notifications (WorkNotificationSource protocol).
-
-        Workers wait on this event to be notified when work becomes available,
-        instead of polling with sleep().
-
-        Returns:
-            asyncio.Event that is set when work is enqueued or resumed
-        """
         return self._work_notify
 
     def timer_notify(self) -> asyncio.Event:
-        """Return event for timer notifications (TimerNotificationSource protocol).
-
-        Timer processors wait on this event to be notified when timer state changes,
-        instead of polling every N seconds.
-
-        Returns:
-            asyncio.Event that is set when timers are scheduled or claimed
-        """
         return self._timer_notify
 
     def status_notify(self) -> asyncio.Event:
-        """Return event for flow status change notifications.
-
-        Callers can use this to wait for flow status changes (completion, failure, etc.)
-        instead of polling. The notification is triggered whenever any flow status changes.
-
-        Returns:
-            asyncio.Event that is set when any flow status changes
-        """
         return self._status_notify

@@ -150,20 +150,27 @@ async def main():
     storage = InMemoryExecutionLog()
     scheduler = Scheduler(storage).with_version("v1.0")
 
+    print("Scheduling order with nested child flows...")
     order = OrderProcessor(order_id="ORD-001", items=["Widget", "Gadget"], total_amount=99.99)
     task_id = await scheduler.schedule(order)
+    print(f"Scheduled order: {task_id}")
 
     worker = Worker(storage, "worker-1")
     await worker.register(OrderProcessor, lambda flow: flow.process_order())
     handle = await worker.start()
+    print("Worker started, processing order...")
 
     while True:
         await asyncio.sleep(0.1)
         scheduled = await storage.get_scheduled_flow(task_id)
         if scheduled and scheduled.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+            print(f"\n Order processing {scheduled.status.value}!")
+            print(f"  Flow type: {scheduled.flow_type}")
+            print(f"  Task ID: {task_id}")
             break
 
     await handle.shutdown()
+    print("Worker shutdown complete")
 
 
 if __name__ == "__main__":

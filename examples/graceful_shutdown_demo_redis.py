@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from pyergon import Scheduler, Worker, flow, flow_type, step
 from pyergon.core import TaskStatus
-from pyergon.storage import InMemoryExecutionLog
+from pyergon.storage.redis import RedisExecutionLog
 
 # Configure detailed logging to show shutdown process
 logging.basicConfig(
@@ -91,7 +91,11 @@ async def main():
     to complete before shutting down, ensuring no work is lost.
     """
     # Initialize storage
-    storage = InMemoryExecutionLog()
+    storage = RedisExecutionLog("redis://localhost:6379")
+    await storage.connect()
+    print("[MAIN] Connected to storage")
+    await storage.reset()
+    print("[MAIN] Reset storage")
 
     # Start 2 workers
     worker1 = Worker(storage, "worker-1").with_poll_interval(0.1)
@@ -143,18 +147,8 @@ async def main():
     print(f"Tasks completed: {completed_count}/{num_tasks}")
     print(f"Tasks failed: {failed_count}/{num_tasks}")
 
-    # Cancel any remaining tasks (mimics asyncio.run() shutdown behavior)
-    # See: asyncio/runners.py _cancel_all_tasks() function
-    current_task = asyncio.current_task()
-    pending = [t for t in asyncio.all_tasks() if not t.done() and t != current_task]
-    if pending:
-        logger.info(f"Cancelling {len(pending)} pending tasks...")
-        for task in pending:
-            task.cancel()
-        # Wait for all tasks to finish (including cancellation)
-        # This is what asyncio.run() does - gather with return_exceptions=True
-        await asyncio.gather(*pending, return_exceptions=True)
-        logger.info("All pending tasks cancelled and finished")
+    # NOTE: Intentionally NOT calling storage.close() to test if it hangs
+    # await storage.close()
 
 
 if __name__ == "__main__":

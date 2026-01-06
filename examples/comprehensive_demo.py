@@ -259,7 +259,8 @@ async def main():
     for i in range(1, 4):
         worker = (
             Worker(storage=storage, worker_id=f"worker-{i}")
-            .with_timers(interval=0.05)
+            .with_timers()
+            .with_timer_interval(0.05)
             .with_poll_interval(0.1)
         )
 

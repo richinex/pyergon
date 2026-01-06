@@ -226,7 +226,7 @@ async def main():
     scenarios.append(("Atlantis", task_id_atlantis))
 
     # Start worker
-    worker = Worker(storage=storage, worker_id="saga-worker", poll_interval=0.1)
+    worker = Worker(storage, "saga-worker").with_poll_interval(0.1)
     await worker.register(HolidaySaga)
     handle = await worker.start()
 

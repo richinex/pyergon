@@ -161,7 +161,7 @@ async def main():
     task_id = await scheduler.schedule(order)
 
     # Start worker
-    worker = Worker(storage, "Worker-1", poll_interval=0.1)
+    worker = Worker(storage, "Worker-1").with_poll_interval(0.1)
     await worker.register(PaymentChildFlow)
     await worker.register(OrderParentFlow)
     worker_handle = await worker.start()

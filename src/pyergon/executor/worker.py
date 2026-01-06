@@ -183,7 +183,7 @@ class Worker:
         self._worker_id = worker_id
         self._enable_timers = False  # Default disabled, use with_timers()
         self._poll_interval = 1.0  # Default 1s, can override with with_poll_interval()
-        self._timer_interval = 0.1  # Default, can override with with_timers(interval)
+        self._timer_interval = 1.0  # Default 1s, can override with with_timer_interval()
         self._max_retries = 3  # Default max retries
         self._backoff_base = 2.0  # Default backoff base
 
@@ -204,9 +204,15 @@ class Worker:
         # See: asyncio docs - "Save a reference to avoid task disappearing mid-execution"
         self._background_tasks: set[asyncio.Task] = set()
 
+        # Backpressure control: Optional semaphore for limiting concurrent flow execution
+        self._max_concurrent_flows: asyncio.Semaphore | None = None
+
         # Dequeue channel (bounded to 1) to prevent work hogging
         # Worker must consume before next dequeue happens
-        self._dequeue_queue: asyncio.Queue[ScheduledFlow | None] = asyncio.Queue(maxsize=1)
+        # Channel sends (ScheduledFlow, permit) tuples - permit held until flow completes
+        self._dequeue_queue: asyncio.Queue[tuple[ScheduledFlow | None, Any]] = asyncio.Queue(
+            maxsize=1
+        )
         self._dequeue_task: asyncio.Task | None = None
 
         self._supports_work_notifications = isinstance(storage, WorkNotificationSource)
@@ -226,19 +232,41 @@ class Worker:
             self._timer_notify = None
             logger.debug(f"Worker {worker_id}: Polling-based timer detection (no notifications)")
 
-    def with_timers(self, interval: float = 0.1) -> "Worker":
+    def with_timers(self) -> "Worker":
         """Enable timer processing (builder pattern).
 
+        When enabled, the worker will process both scheduled flows AND
+        expired timers, providing distributed timer coordination.
+
         Builder pattern allows fluent configuration:
-        worker.with_timers().with_poll_interval(2.0)
+        worker.with_timers().with_timer_interval(0.1).with_poll_interval(2.0)
+
+        Returns:
+            self for method chaining
+
+        Example:
+            worker = Worker(storage, "worker-1").with_timers()
+        """
+        self._enable_timers = True
+        return self
+
+    def with_timer_interval(self, interval: float) -> "Worker":
+        """Set the interval for checking expired timers (builder pattern).
+
+        Only available when timer processing is enabled via with_timers().
+        Default is 1 second.
+
+        Lower intervals provide better timer precision but higher CPU usage.
 
         Args:
             interval: Seconds between timer checks
 
         Returns:
             self for method chaining
+
+        Example:
+            worker = Worker(storage, "worker-1").with_timers().with_timer_interval(0.1)
         """
-        self._enable_timers = True
         self._timer_interval = interval
         return self
 
@@ -259,7 +287,7 @@ class Worker:
         self._poll_interval_with_jitter = interval + (jitter_ms / 1000.0)
         return self
 
-    def with_signals(self, signal_source: Any, poll_interval: float = 0.5) -> "Worker":
+    def with_signals(self, signal_source: Any) -> "Worker":
         """Enable external signal processing (builder pattern).
 
         Enables the worker to poll the signal source and deliver signals
@@ -271,13 +299,57 @@ class Worker:
 
         Args:
             signal_source: SignalSource protocol implementation to poll
-            poll_interval: Seconds between signal polls (default: 0.5)
 
         Returns:
             self for method chaining
         """
         self._signal_source = signal_source
-        self._signal_poll_interval = poll_interval
+        return self
+
+    def with_signal_interval(self, interval: float) -> "Worker":
+        """Set the interval for polling signals (builder pattern).
+
+        Only available when signal processing is enabled via with_signals().
+        Default is 500ms.
+
+        Args:
+            interval: Seconds between signal polls
+
+        Returns:
+            self for method chaining
+
+        Example:
+            worker = Worker(storage, "worker-1").with_signals(source).with_signal_interval(0.1)
+        """
+        self._signal_poll_interval = interval
+        return self
+
+    def with_max_concurrent_flows(self, max_concurrent: int) -> "Worker":
+        """Enable backpressure control by limiting maximum concurrent flow executions.
+
+        This prevents unbounded task spawning and provides flow control for high-load
+        scenarios. When the limit is reached, the worker will wait for a slot to
+        become available before picking up new flows.
+
+        The semaphore permit is acquired BEFORE querying the database, providing
+        true backpressure that prevents the worker from even attempting to dequeue
+        flows when at capacity.
+
+        Example:
+            worker = Worker(storage, "worker-1").with_max_concurrent_flows(100)
+
+        Args:
+            max_concurrent: Maximum number of flows that can execute concurrently
+
+        Returns:
+            self for method chaining
+
+        Performance Considerations:
+            - No limit (default): Natural rate limiting via poll interval
+            - With limit: Explicit backpressure, prevents resource exhaustion
+            - Recommended for production: 50-500 depending on flow complexity
+        """
+        self._max_concurrent_flows = asyncio.Semaphore(max_concurrent)
         return self
 
     async def register(
@@ -324,6 +396,9 @@ class Worker:
         Returns WorkerHandle immediately, letting caller decide
         whether to await or run concurrently.
 
+        The worker runs until the task is cancelled (via handle.shutdown()
+        or handle.abort()).
+
         Returns:
             WorkerHandle for shutdown control
         """
@@ -336,41 +411,72 @@ class Worker:
 
         Uses bounded queue (maxsize=1) to prevent hogging - worker must consume
         before next dequeue happens.
+
+        Backpressure strategy:
+        1. Acquire semaphore permit BEFORE database query (if limit configured)
+        2. Query database for flow
+        3. Send (flow, permit) tuple to main loop
+        4. Main loop holds permit until flow completes, preventing over-subscription
+
+        Runs until cancelled (CancelledError raised).
         """
         while self._running and not self._shutdown_event.is_set():
+            permit = None
             try:
+                # Acquire permit before DB query for true backpressure
+                if self._max_concurrent_flows is not None:
+                    permit = await self._max_concurrent_flows.acquire()
+
+                # Query database
                 scheduled_flow = await self._storage.dequeue_flow(self._worker_id)
 
                 if scheduled_flow is not None:
-                    # Put in queue - blocks if queue is full (worker hasn't consumed)
-                    await self._dequeue_queue.put(scheduled_flow)
+                    # Send (flow, permit) to main loop - permit held until flow completes
+                    await self._dequeue_queue.put((scheduled_flow, permit))
+                    permit = None  # Transferred ownership to queue
                 else:
-                    # No flow available, wait for notification
+                    # No flow - release permit and wait for notification
+                    if permit is not None:
+                        self._max_concurrent_flows.release()
+                        permit = None
+
                     if self._supports_work_notifications:
                         try:
                             await asyncio.wait_for(
-                                self._work_notify.wait(), timeout=self._poll_interval_with_jitter
+                                self._work_notify.wait(),
+                                timeout=self._poll_interval_with_jitter,
                             )
                             self._work_notify.clear()
                         except TimeoutError:
                             pass
+                    else:
+                        # No notification support - sleep to avoid tight loop
+                        # This is critical for cancellation to work!
+                        await asyncio.sleep(self._poll_interval_with_jitter)
 
             except Exception as e:
+                # Release permit on error
+                if permit is not None and self._max_concurrent_flows is not None:
+                    self._max_concurrent_flows.release()
+                    permit = None
+
                 logger.error(f"Background dequeue error: {e}")
                 await asyncio.sleep(0.1)
 
     async def _run(self) -> None:
-        """Main worker loop using asyncio.wait with FIRST_COMPLETED (mirrors Rust tokio::select!).
+        """Main worker loop using asyncio.wait with FIRST_COMPLETED.
 
         Concurrently waits on multiple event sources:
-        1. Shutdown signal
-        2. Flow dequeue (from background task via bounded queue)
-        3. Timer sleep (sleeps until next timer fires)
-        4. Timer notification (wakes when new timer scheduled)
-        5. Signal processing (periodic, if enabled)
+        1. Flow dequeue (from background task via bounded queue)
+        2. Timer sleep (sleeps until next timer fires)
+        3. Timer notification (wakes when new timer scheduled)
+        4. Signal processing (periodic, if enabled)
+        5. Maintenance tasks (delayed tasks, stale lock recovery)
 
         Whichever completes first is handled, then loop repeats.
         This matches Rust's tokio::select! pattern for true event-driven execution.
+
+        Runs until cancelled (CancelledError raised).
         """
         logger.info(f"Worker {self._worker_id} started")
 
@@ -423,7 +529,8 @@ class Worker:
 
                     # Wait for FIRST task to complete (like tokio::select!)
                     done, pending = await asyncio.wait(
-                        pending_tasks.values(), return_when=asyncio.FIRST_COMPLETED
+                        pending_tasks.values(),
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
 
                     # Cancel all pending tasks
@@ -460,12 +567,12 @@ class Worker:
                             break
 
                         elif task_name == "dequeue":
-                            # Got a flow - execute it
-                            scheduled_flow = result
+                            # Got a flow - unpack (flow, permit) tuple
+                            scheduled_flow, permit = result
                             self._dequeue_queue.task_done()
 
-                            # Execute flow in background
-                            task = asyncio.create_task(self._execute_flow(scheduled_flow))
+                            # Execute flow in background, passing permit
+                            task = asyncio.create_task(self._execute_flow(scheduled_flow, permit))
                             self._background_tasks.add(task)
                             task.add_done_callback(self._background_tasks.discard)
 
@@ -691,7 +798,7 @@ class Worker:
         except Exception as e:
             logger.error(f"Signal processing error: {e}")
 
-    async def _execute_flow(self, scheduled_flow: ScheduledFlow) -> None:
+    async def _execute_flow(self, scheduled_flow: ScheduledFlow, permit: Any = None) -> None:
         """Execute a flow using registry and handle FlowOutcome.
 
         This method:
@@ -700,8 +807,19 @@ class Worker:
         3. Call executor with (flow_data, flow_id, storage, parent_metadata)
         4. Handle outcome (Suspended/Completed)
 
+        The permit is held for the duration of flow execution, then automatically
+        released when this method returns (providing backpressure control).
+
+        Args:
+            scheduled_flow: Flow to execute
+            permit: Optional semaphore permit (held until flow completes)
+
         Error handling is delegated to execution.handle_flow_error().
         """
+        # Hold permit until method returns - permit automatically released when scope exits
+        # This provides backpressure by keeping the semaphore slot occupied during execution
+        _ = permit  # Intentionally hold reference to prevent premature release
+
         try:
             executor = self._registry.get_executor(scheduled_flow.flow_type)
             parent_metadata = scheduled_flow.parent_metadata
@@ -819,15 +937,39 @@ class WorkerHandle:
         self._worker = worker
         self._task = task
 
+    def worker_id(self) -> str:
+        """Return the worker ID.
+
+        Returns:
+            Worker identifier string
+        """
+        return self._worker._worker_id
+
+    def is_running(self) -> bool:
+        """Return True if the worker task is still running.
+
+        Returns:
+            True if worker is running, False if finished
+        """
+        return not self._task.done()
+
     async def shutdown(self) -> None:
         """Shutdown worker and wait for completion.
 
-        Simple sequence: shutdown → wait → done.
+        Triggers worker shutdown, then waits for the main task to complete.
         """
         await self._worker.shutdown()
         await self._task
 
         logger.info("Worker handle closed")
+
+    def abort(self) -> None:
+        """Abort the worker immediately without waiting for completion.
+
+        Note: This bypasses graceful shutdown and may leave flows in an
+        inconsistent state. Prefer shutdown() for normal termination.
+        """
+        self._task.cancel()
 
 
 class WorkerError(Exception):

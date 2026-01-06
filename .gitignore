@@ -53,3 +53,5 @@ CLAUDE.md
 .claude/
 data/
 docs/
+*.db-shm
+*.db-wal
