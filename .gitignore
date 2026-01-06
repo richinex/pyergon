@@ -55,3 +55,4 @@ data/
 docs/
 *.db-shm
 *.db-wal
+# Logs
