@@ -400,6 +400,10 @@ class Worker:
                     delayed_task = asyncio.create_task(asyncio.sleep(1.0))  # Check every 1s
                     pending_tasks["delayed_tasks"] = delayed_task
 
+                    # 3. Maintenance: Recover stale locks (for crashed workers)
+                    stale_lock_task = asyncio.create_task(asyncio.sleep(60.0))  # Check every 60s
+                    pending_tasks["stale_locks"] = stale_lock_task
+
                     # 3. Timer sleep task - if timers enabled
                     if self._enable_timers:
                         timer_sleep_task = asyncio.create_task(
@@ -482,6 +486,19 @@ class Worker:
                             except Exception as e:
                                 logger.warning(
                                     f"Worker {self._worker_id} failed to move delayed tasks: {e}"
+                                )
+
+                        elif task_name == "stale_locks":
+                            # Maintenance: Recover flows locked by crashed workers
+                            try:
+                                count = await self._storage.recover_stale_locks()
+                                if count > 0:
+                                    logger.info(
+                                        f"Worker {self._worker_id} recovered {count} stale locks"
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Worker {self._worker_id} failed to recover stale locks: {e}"
                                 )
 
                         elif task_name == "timer_sleep":
