@@ -619,9 +619,8 @@ class InMemoryExecutionLog(ExecutionLog):
             tasks_to_remove = []
             for task_id, flow in self._scheduled_flows.items():
                 if (
-                    (flow.status == TaskStatus.COMPLETE or flow.status == TaskStatus.FAILED)
-                    and flow.updated_at < cutoff
-                ):
+                    flow.status == TaskStatus.COMPLETE or flow.status == TaskStatus.FAILED
+                ) and flow.updated_at < cutoff:
                     tasks_to_remove.append(task_id)
 
             for task_id in tasks_to_remove:

@@ -91,7 +91,6 @@ class SqliteExecutionLog(ExecutionLog):
             return "SqliteExecutionLog(in-memory)"
         return f"SqliteExecutionLog({self.db_path})"
 
-
     async def connect(self) -> None:
         """Open database connection and initialize schema.
 
