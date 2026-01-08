@@ -1,22 +1,15 @@
 """Distributed worker for polling and executing flows.
 
-Design: Template Method Pattern
-Main loop defines the algorithm skeleton:
-1. Process timers (if enabled)
-2. Process flows
-3. Sleep before next poll
-
-Design: Strategy Pattern
-Flow handlers are strategies - different execution strategies for
-different flow types. Registered via register() method, executed
-polymorphically.
+Workers poll the storage queue for pending flows, execute them in background
+tasks, and handle timer/signal processing. Supports graceful shutdown and
+configurable concurrency limits.
 
 Features:
-- Polls storage queue for pending flows
-- Non-blocking flow execution in background
-- Processes expired timers (if enabled)
+- Event-driven work polling with fallback
+- Non-blocking flow execution
+- Timer and signal processing (optional)
 - Retry logic with exponential backoff
-- Graceful shutdown via WorkerHandle
+- Graceful shutdown
 """
 
 import asyncio
@@ -40,7 +33,6 @@ from pyergon.storage.base import ExecutionLog
 
 logger = logging.getLogger(__name__)
 
-# Type variable for storage backend
 S = TypeVar("S", bound=ExecutionLog)
 
 
@@ -181,11 +173,11 @@ class Worker:
         """
         self._storage = storage
         self._worker_id = worker_id
-        self._enable_timers = False  # Default disabled, use with_timers()
-        self._poll_interval = 1.0  # Default 1s, can override with with_poll_interval()
-        self._timer_interval = 1.0  # Default 1s, can override with with_timer_interval()
-        self._max_retries = 3  # Default max retries
-        self._backoff_base = 2.0  # Default backoff base
+        self._enable_timers = False
+        self._poll_interval = 1.0
+        self._timer_interval = 1.0
+        self._max_retries = 3
+        self._backoff_base = 2.0
 
         # Add jitter to poll interval to avoid thundering herd
         worker_hash = sum(ord(c) for c in worker_id)
@@ -427,7 +419,6 @@ class Worker:
                 if self._max_concurrent_flows is not None:
                     permit = await self._max_concurrent_flows.acquire()
 
-                # Query database
                 scheduled_flow = await self._storage.dequeue_flow(self._worker_id)
 
                 if scheduled_flow is not None:
@@ -473,17 +464,15 @@ class Worker:
         4. Signal processing (periodic, if enabled)
         5. Maintenance tasks (delayed tasks, stale lock recovery)
 
-        Whichever completes first is handled, then loop repeats.
-        This matches Rust's tokio::select! pattern for true event-driven execution.
+        Whichever completes first is handled, then loop repeats for true
+        event-driven execution.
 
         Runs until cancelled (CancelledError raised).
         """
         logger.info(f"Worker {self._worker_id} started")
 
-        # Start background dequeue task
         self._dequeue_task = asyncio.create_task(self._background_dequeue_loop())
 
-        # Track next timer wake time (like Rust)
         next_timer_wake: datetime | None = None
 
         try:
@@ -491,49 +480,39 @@ class Worker:
                 try:
                     logger.debug(f"Worker {self._worker_id}: Loop iteration starting")
 
-                    # Build list of concurrent tasks to wait on
                     pending_tasks = {}
 
-                    # 0. Shutdown event - always wait for shutdown signal
                     shutdown_task = asyncio.create_task(self._shutdown_event.wait())
                     pending_tasks["shutdown"] = shutdown_task
 
-                    # 1. Dequeue task - always wait for flows
                     dequeue_task = asyncio.create_task(self._dequeue_queue.get())
                     pending_tasks["dequeue"] = dequeue_task
 
-                    # 2. Maintenance: Move ready delayed tasks (for retries)
-                    delayed_task = asyncio.create_task(asyncio.sleep(1.0))  # Check every 1s
+                    delayed_task = asyncio.create_task(asyncio.sleep(1.0))
                     pending_tasks["delayed_tasks"] = delayed_task
 
-                    # 3. Maintenance: Recover stale locks (for crashed workers)
-                    stale_lock_task = asyncio.create_task(asyncio.sleep(60.0))  # Check every 60s
+                    stale_lock_task = asyncio.create_task(asyncio.sleep(60.0))
                     pending_tasks["stale_locks"] = stale_lock_task
 
-                    # 3. Timer sleep task - if timers enabled
                     if self._enable_timers:
                         timer_sleep_task = asyncio.create_task(
                             self._create_timer_sleep(next_timer_wake)
                         )
                         pending_tasks["timer_sleep"] = timer_sleep_task
 
-                        # 4. Timer notification - wake when new timer scheduled
                         if self._supports_timer_notifications:
                             timer_notify_task = asyncio.create_task(self._timer_notify.wait())
                             pending_tasks["timer_notify"] = timer_notify_task
 
-                    # 5. Signal processing - if enabled (periodic check)
                     if self._signal_source is not None:
                         signal_task = asyncio.create_task(asyncio.sleep(self._signal_poll_interval))
                         pending_tasks["signal"] = signal_task
 
-                    # Wait for FIRST task to complete (like tokio::select!)
                     done, pending = await asyncio.wait(
                         pending_tasks.values(),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
 
-                    # Cancel all pending tasks
                     for task in pending:
                         task.cancel()
                         try:
@@ -541,18 +520,14 @@ class Worker:
                         except asyncio.CancelledError:
                             pass
 
-                    # Handle the completed task
                     for completed_task in done:
-                        # Find which task completed
                         task_name = None
                         for name, task in pending_tasks.items():
                             if task == completed_task:
                                 task_name = name
                                 break
 
-                        # Check if task raised an exception
                         try:
-                            # Get result (will raise if task failed)
                             result = completed_task.result()
                         except Exception as task_error:
                             logger.error(
@@ -562,16 +537,13 @@ class Worker:
                             continue
 
                         if task_name == "shutdown":
-                            # Shutdown signal received - exit loop
                             logger.debug(f"Worker {self._worker_id}: Shutdown signal received")
                             break
 
                         elif task_name == "dequeue":
-                            # Got a flow - unpack (flow, permit) tuple
                             scheduled_flow, permit = result
                             self._dequeue_queue.task_done()
 
-                            # Execute flow in background, passing permit
                             task = asyncio.create_task(self._execute_flow(scheduled_flow, permit))
                             self._background_tasks.add(task)
                             task.add_done_callback(self._background_tasks.discard)
@@ -582,7 +554,6 @@ class Worker:
                             )
 
                         elif task_name == "delayed_tasks":
-                            # Maintenance: Move ready delayed tasks (retries) to ready queue
                             try:
                                 count = await self._storage.move_ready_delayed_tasks()
                                 if count > 0:
@@ -596,7 +567,6 @@ class Worker:
                                 )
 
                         elif task_name == "stale_locks":
-                            # Maintenance: Recover flows locked by crashed workers
                             try:
                                 count = await self._storage.recover_stale_locks()
                                 if count > 0:
@@ -609,20 +579,15 @@ class Worker:
                                 )
 
                         elif task_name == "timer_sleep":
-                            # Timer fired - process expired timers
                             await self._process_timers()
-
-                            # Recalculate next wake time
                             next_timer_wake = await self._calculate_next_timer_wake()
 
                         elif task_name == "timer_notify":
-                            # Timer notification - recalculate next wake time
                             self._timer_notify.clear()
                             next_timer_wake = await self._calculate_next_timer_wake()
                             logger.debug(f"Worker {self._worker_id}: Timer notification received")
 
                         elif task_name == "signal":
-                            # Process signals
                             await self._process_signals()
 
                 except Exception as e:
@@ -636,28 +601,24 @@ class Worker:
             logger.info(f"Worker {self._worker_id} stopped")
 
     async def _create_timer_sleep(self, next_timer_wake: datetime | None) -> None:
-        """Create timer sleep future (mirrors Rust timer_sleep).
+        """Sleep until next timer fires, or forever if no timers scheduled.
 
-        If next_timer_wake is None, sleeps forever (like std::future::pending()).
-        Otherwise, sleeps until the specified time.
+        Args:
+            next_timer_wake: When next timer should fire, or None if no timers
         """
         if next_timer_wake is None:
-            # No timers - sleep forever (will be cancelled when timer notification arrives)
-            # This matches Rust's std::future::pending()
+            # No timers - sleep forever (cancelled when timer notification arrives)
             await asyncio.sleep(float("inf"))
         else:
-            # Calculate sleep duration
             now = datetime.now()
             if next_timer_wake <= now:
-                # Timer already expired - return immediately
                 return
             else:
-                # Sleep until timer fires
                 sleep_duration = (next_timer_wake - now).total_seconds()
                 await asyncio.sleep(sleep_duration)
 
     async def _calculate_next_timer_wake(self) -> datetime | None:
-        """Calculate next timer wake time (mirrors Rust timer wake calculation).
+        """Get the next timer fire time from storage.
 
         Returns:
             datetime when next timer should fire, or None if no timers
@@ -669,16 +630,11 @@ class Worker:
             return None
 
     async def _process_timers(self) -> None:
-        """Process expired timers (HOOK for Template Method).
+        """Process expired timers.
 
-        This method:
-        1. Gets expired timers from storage
-        2. Claims each timer atomically (optimistic concurrency)
-        3. Stores suspension result for timer (marks it as fired)
-        4. Resumes the suspended flow
-
-        Distributed: No in-memory notification - all state in database.
-        Timers work across multiple processes and machines.
+        Fetches expired timers, atomically claims them, stores suspension
+        results, and resumes suspended flows. All state persisted to storage
+        for distributed coordination.
         """
         now = datetime.now()
 

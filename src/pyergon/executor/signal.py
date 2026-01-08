@@ -1,14 +1,8 @@
 """External signal handling for flow coordination.
 
-Provides:
-- Wait/resume mechanism for external events
-- Global state management for waiting flows
-- Support for pausing flows until external events occur
-
-Design: Information Hiding (Parnas)
-Encapsulates decisions about signal coordination across flow
-executions. Uses asyncio.Event for async notification and
-global dictionaries to track waiting flows and resume parameters.
+Enables flows to pause until external events occur (webhooks, manual approval,
+email confirmation). Uses asyncio.Event for notification and global state to
+coordinate waiting flows across executions.
 """
 
 import asyncio
@@ -24,7 +18,6 @@ from pyergon.models import InvocationStatus
 _wait_notifiers: dict[str, asyncio.Event] = {}
 _resume_params: dict[str, bytes] = {}
 
-# Lock for thread-safe access to dictionaries
 _lock = asyncio.Lock()
 
 R = TypeVar("R")
@@ -55,7 +48,6 @@ async def await_external_signal(signal_name: str) -> bytes:
     if ctx is None:
         raise RuntimeError("await_external_signal called outside execution context")
 
-    # Get current step number
     current_step = ctx.get_enclosing_step()
     if current_step is None:
         raise RuntimeError("await_external_signal called but no enclosing step set")
@@ -64,13 +56,11 @@ async def await_external_signal(signal_name: str) -> bytes:
     existing_inv = await ctx.storage.get_invocation(ctx.flow_id, current_step)
 
     if existing_inv and existing_inv.status == InvocationStatus.COMPLETE:
-        # Signal already received - return cached result
         if existing_inv.return_value:
             return existing_inv.return_value
         raise RuntimeError("Signal step completed but no return value found")
 
     if existing_inv and existing_inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
-        # Check if signal has arrived while we were waiting
         params = await ctx.storage.get_suspension_result(ctx.flow_id, current_step, signal_name)
         if params:
             # Signal arrived! Return the data.
@@ -84,7 +74,6 @@ async def await_external_signal(signal_name: str) -> bytes:
     # First time - mark as waiting for signal
     await ctx.storage.log_signal(ctx.flow_id, current_step, signal_name)
 
-    # Suspend execution
     from pyergon.executor.outcome import SuspendReason, _SuspendExecution
 
     reason = SuspendReason(flow_id=ctx.flow_id, step=current_step, signal_name=signal_name)
@@ -152,7 +141,6 @@ async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R
     # Get the current step number (peek without incrementing)
     current_step = ctx.current_step()
 
-    # Check if this step is already waiting for a signal
     existing_inv = await ctx.storage.get_invocation(flow_id=ctx.flow_id, step=current_step)
 
     if existing_inv and existing_inv.status == InvocationStatus.WAITING_FOR_SIGNAL:
@@ -182,7 +170,6 @@ async def await_external_signal_callable(step_callable: Callable[[], Awaitable[R
             # Step completed immediately (no wait needed)
             return result
 
-        # Step is awaiting - wait for external signal
         return await _await_signal(ctx.flow_id)
     finally:
         CALL_TYPE.reset(token)
@@ -203,16 +190,13 @@ async def _await_signal(flow_id: str) -> Any:
     Raises:
         RuntimeError: If no resume parameters found
     """
-    # Get or create notifier
     async with _lock:
         if flow_id not in _wait_notifiers:
             _wait_notifiers[flow_id] = asyncio.Event()
         notifier = _wait_notifiers[flow_id]
 
-    # Wait for notification
     await notifier.wait()
 
-    # Retrieve resume parameters
     async with _lock:
         params_bytes = _resume_params.pop(flow_id, None)
         # Clean up notifier
@@ -221,7 +205,6 @@ async def _await_signal(flow_id: str) -> Any:
     if params_bytes is None:
         raise RuntimeError("No resume parameters found")
 
-    # Deserialize and return
     result = pickle.loads(params_bytes)
     return result
 
@@ -254,7 +237,6 @@ def signal_resume(flow_id: str, params: Any) -> None:
             return {"status": "confirmed"}
         ```
     """
-    # Serialize parameters
     params_bytes = pickle.dumps(params)
 
     # Store params and notify (synchronously schedule on event loop)
@@ -273,17 +255,14 @@ async def _signal_resume_async(flow_id: str, params_bytes: bytes) -> None:
         params_bytes: Serialized parameters
     """
     async with _lock:
-        # Store resume parameters
         _resume_params[flow_id] = params_bytes
 
-        # Get or create notifier and wake it up
         if flow_id not in _wait_notifiers:
             _wait_notifiers[flow_id] = asyncio.Event()
         notifier = _wait_notifiers[flow_id]
         notifier.set()
 
 
-# Public exports
 __all__ = [
     "await_external_signal",
     "signal_resume",

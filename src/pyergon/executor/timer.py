@@ -1,20 +1,17 @@
 """Durable timer scheduling for flows.
 
-Design: Observer Pattern
-Timers notify waiting flows when they fire. Timers are durable
-and survive process restarts. All state is persisted in storage,
-allowing workers to fire timers even if the original process crashed.
+Timers pause workflow execution for a specified duration. All state is
+persisted to storage, surviving process crashes and enabling distributed
+operation across multiple workers.
 
-Distributed Implementation:
-Timers work across multiple processes and machines because:
-1. Timer state is persisted in storage (database)
-2. Workers poll storage for expired timers
-3. Workers atomically claim timers to prevent duplicate firing
-4. Timer results are stored in suspension_params table
-5. Flows check storage for timer results on resume
+Implementation:
+1. schedule_timer_named() persists timer to storage and suspends flow
+2. Workers sleep until timer fires (event-driven) or poll periodically (fallback)
+3. On timer expiry: worker atomically claims timer, stores SuspensionPayload
+4. Flow resumes and checks storage for timer result
 
-No in-memory synchronization needed. All coordination happens
-through the database.
+Atomic claiming prevents duplicate firing. Observer pattern: timers notify
+waiting flows when they fire.
 """
 
 from datetime import datetime, timedelta
@@ -85,15 +82,12 @@ async def schedule_timer_named(duration: float, name: str) -> None:
     from pyergon.executor.outcome import SuspendReason, _SuspendExecution
     from pyergon.models import InvocationStatus
 
-    # Get current flow context
     ctx = get_current_context()
 
-    # Get the step number from enclosing step
     current_step = ctx.get_enclosing_step()
     if current_step is None:
         raise TimerError("schedule_timer called but no enclosing step set")
 
-    # Check if we're resuming from a timer
     existing_inv = await ctx.storage.get_invocation(ctx.flow_id, current_step)
 
     if existing_inv is not None:
@@ -102,7 +96,6 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             return
 
         if existing_inv.status == InvocationStatus.WAITING_FOR_TIMER:
-            # Check if timer has fired and has a cached result
             timer_key = name if name else ""
 
             result_bytes = await ctx.storage.get_suspension_result(
@@ -113,7 +106,6 @@ async def schedule_timer_named(duration: float, name: str) -> None:
                 # Timer fired - clean up suspension result
                 await ctx.storage.remove_suspension_result(ctx.flow_id, current_step, timer_key)
 
-                # Deserialize the SuspensionPayload to check success
                 import pickle
 
                 from pyergon.executor.suspension_payload import SuspensionPayload
@@ -124,15 +116,12 @@ async def schedule_timer_named(duration: float, name: str) -> None:
                     # Handle both dict (backward compat) and dataclass
                     if isinstance(payload, SuspensionPayload):
                         if payload.success:
-                            # Timer fired successfully
                             return
                         else:
                             # Timer marked as failed (shouldn't happen, but handle gracefully)
                             raise TimerError("Timer marked as failed")
                     elif isinstance(payload, dict):
-                        # Backward compatibility with dict-based payloads
                         if payload.get("success", False):
-                            # Timer fired successfully
                             return
                         else:
                             raise TimerError("Timer marked as failed")
@@ -149,7 +138,6 @@ async def schedule_timer_named(duration: float, name: str) -> None:
             )
             ctx.set_suspend_reason(reason)
 
-            # Raise exception to signal suspension
             raise _SuspendExecution()
 
     # First time - calculate fire time and log timer
@@ -157,7 +145,6 @@ async def schedule_timer_named(duration: float, name: str) -> None:
 
     await ctx.storage.log_timer(ctx.flow_id, current_step, fire_at, name if name else None)
 
-    # Set suspension reason and raise exception to suspend
     reason = SuspendReason(
         flow_id=ctx.flow_id,
         step=current_step,
@@ -165,14 +152,7 @@ async def schedule_timer_named(duration: float, name: str) -> None:
     )
     ctx.set_suspend_reason(reason)
 
-    # Raise suspension exception for executor to catch
     raise _SuspendExecution()
-
-
-# Workers handle timer firing by polling storage for expired timers,
-# atomically claiming them, storing suspension results, and resuming flows.
-# When the flow resumes, schedule_timer_named() checks storage for the
-# suspension result and continues execution. No in-memory notification needed.
 
 
 class TimerError(Exception):
