@@ -3,7 +3,7 @@
 
 [project]
 name = "pyergon"
-version = "0.7.0"
+version = "0.8.0"
 description = "Durable execution framework for Python"
 authors = [{ name = "Richard chukwu" }]
 readme = "README.md"
@@ -22,7 +22,7 @@ keywords = ["workflow", "durable-execution", "temporal", "async", "llm"]
 dependencies = [
     "aiosqlite==0.21.0", # Async SQLite storage backend
     "redis[hiredis]>=5.0.0,<6.5", # Async Redis storage backend (compatible with Celery + hiredis for performance)
-    "numpy==2.4.0", # For scientific computation examples (latest stable as of Dec 2024)
+    "numpy==2.4.1", # For scientific computation examples (latest stable as of Jan 2026)
     "uuid7>=0.1.0", # UUID7 backport for Python 3.11+ (time-ordered UUIDs)
     "xxhash>=3.0.0", # Fast non-cryptographic hashing (4-6x faster than SHA256)
     "celery[redis]>=5.4.0", # Distributed task queue for benchmarking comparison
