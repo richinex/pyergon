@@ -16,6 +16,7 @@ from pyergon.core import TaskStatus
 # Suppress worker logging for clean output
 logging.basicConfig(level=logging.CRITICAL)
 
+
 class SagaError(Exception):
     """Base class for saga errors with retry protocol."""
 
@@ -106,24 +107,6 @@ class HolidaySaga:
         return f"Confirmed: {flight_id} / {hotel_id} / {car_id}"
 
 
-async def _wait_for_completion(storage, task_ids, status_notify):
-    while True:
-        all_complete = True
-
-        for task_id in task_ids:
-            task = await storage.get_scheduled_flow(task_id)
-            if task:
-                if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-                    all_complete = False
-                    break
-
-        if all_complete:
-            break
-
-        await status_notify.wait()
-        status_notify.clear()
-
-
 async def _print_results(storage, scenarios):
     for destination, task_id in scenarios:
         task = await storage.get_scheduled_flow(task_id)
@@ -151,11 +134,11 @@ async def main():
     await worker.register(HolidaySaga)
     handle = await worker.start()
 
-    status_notify = storage.status_notify()
     task_ids = [task_id for _, task_id in scenarios]
 
+    # Wait for all sagas to complete using race-free helper method
     try:
-        await asyncio.wait_for(_wait_for_completion(storage, task_ids, status_notify), timeout=10.0)
+        await asyncio.wait_for(storage.wait_for_all(task_ids), timeout=10.0)
     except TimeoutError:
         print("Timeout waiting for sagas to complete")
 

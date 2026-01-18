@@ -1,12 +1,7 @@
 """Direct flow execution without a work queue.
 
-Provides the Executor class for running flows immediately in the
-current process. For distributed execution with multiple workers,
-use Scheduler and Worker instead.
-
-Design: Simplicity
-Single type combining state and execution methods. Package name
-provides context (pyergon.Executor), so no redundant prefix needed.
+Runs flows immediately in the current process. For distributed execution
+with multiple workers, use Scheduler and Worker instead.
 """
 
 from collections.abc import Awaitable, Callable
@@ -27,8 +22,8 @@ from pyergon.executor.outcome import (
 )
 from pyergon.storage.base import ExecutionLog
 
-T = TypeVar("T")  # Flow type
-R = TypeVar("R")  # Result type
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 class Executor(Generic[T]):
@@ -68,7 +63,6 @@ class Executor(Generic[T]):
         self.storage = storage
         self.flow_id = flow_id or str(uuid4())
 
-        # Extract class name from flow
         if class_name is not None:
             self.class_name = class_name
         else:
@@ -98,26 +92,20 @@ class Executor(Generic[T]):
                     print(f"Flow suspended: {reason}")
             ```
         """
-        # Create execution context
         ctx = Context(flow_id=self.flow_id, storage=self.storage, class_name=self.class_name)
 
-        # Set task-local context
         token_ctx = EXECUTION_CONTEXT.set(ctx)
         token_call_type = CALL_TYPE.set(CallType.RUN)
 
         try:
-            # Execute flow with context available
-            # The @flow decorator handles step 0 allocation, caching, and logging
             result = await entry_point(self.flow)
 
-            # Check for suspension
             suspend_reason = ctx.take_suspend_reason()
 
             if suspend_reason is not None:
                 # Flow suspended - don't log completion
                 return Suspended(reason=suspend_reason)
             else:
-                # Flow completed normally
                 return Completed(result=result)
 
         except _SuspendExecution:
@@ -135,7 +123,6 @@ class Executor(Generic[T]):
             return Completed(result=e)
 
         finally:
-            # Clean up task-local context
             EXECUTION_CONTEXT.reset(token_ctx)
             CALL_TYPE.reset(token_call_type)
 
@@ -158,11 +145,6 @@ class Executor(Generic[T]):
     def __repr__(self) -> str:
         """Readable representation for debugging."""
         return f"Executor(flow_id={self.flow_id!r}, class_name={self.class_name!r})"
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
 
 
 async def execute_flow(

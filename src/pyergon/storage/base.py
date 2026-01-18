@@ -83,19 +83,17 @@ class ExecutionLog(ABC):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """Record the start of a step execution.
 
         Args:
             flow_id: Unique flow identifier
-            step: Step number (0-indexed)
+            step: int (0-indexed)
             class_name: Name of flow class
             method_name: Name of step method
             parameters: Serialized parameters (pickle format)
             params_hash: Hash of parameters for non-determinism detection
-            delay: Optional delay before execution in milliseconds
             retry_policy: Optional retry policy for this invocation
 
         Returns:
@@ -556,6 +554,65 @@ class ExecutionLog(ABC):
 
         Storage connections must be explicitly closed.
         Use this in a context manager or try/finally block.
+        """
+        pass
+
+    @abstractmethod
+    async def wait_for_completion(self, task_id: str) -> TaskStatus:
+        """Wait for a single task to complete (race-free).
+
+        Blocks until the task reaches a terminal state (COMPLETE or FAILED).
+        Uses the pin-before-check pattern internally to avoid notification races.
+
+        This is the recommended way to wait for task completion instead of
+        manually checking status and awaiting status_notify().
+
+        Args:
+            task_id: Task identifier from enqueue_flow()
+
+        Returns:
+            Final TaskStatus (COMPLETE or FAILED)
+
+        Raises:
+            StorageError: If task not found or storage operation fails
+
+        Example:
+            ```python
+            task_id = await storage.enqueue_flow(flow)
+            status = await storage.wait_for_completion(task_id)
+            if status == TaskStatus.COMPLETE:
+                result = await storage.get_scheduled_flow(task_id)
+            ```
+        """
+        pass
+
+    @abstractmethod
+    async def wait_for_all(self, task_ids: list[str]) -> list[tuple[str, TaskStatus]]:
+        """Wait for all tasks to complete (race-free).
+
+        Blocks until all tasks reach terminal states (COMPLETE or FAILED).
+        Uses the pin-before-check pattern internally to avoid notification races.
+
+        This is the recommended way to wait for multiple tasks instead of
+        manually looping and checking statuses.
+
+        Args:
+            task_ids: List of task identifiers from enqueue_flow()
+
+        Returns:
+            List of (task_id, TaskStatus) tuples for all tasks
+
+        Raises:
+            StorageError: If any task not found or storage operation fails
+
+        Example:
+            ```python
+            task_ids = [await storage.enqueue_flow(f) for f in flows]
+            results = await storage.wait_for_all(task_ids)
+            for task_id, status in results:
+                if status == TaskStatus.COMPLETE:
+                    print(f"Task {task_id} succeeded")
+            ```
         """
         pass
 

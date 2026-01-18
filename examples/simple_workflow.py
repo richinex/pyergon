@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass
 
 from pyergon import Scheduler, Worker, flow, flow_type, step
-from pyergon.core import TaskStatus
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -44,13 +43,8 @@ async def main():
     scheduler = Scheduler(storage).with_version("v1.0")
     task_id = await scheduler.schedule(DataPipeline(id="data_001", value=42))
 
-    status_notify = storage.status_notify()
-    while True:
-        task = await storage.get_scheduled_flow(task_id)
-        if task and task.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-            break
-        await status_notify.wait()
-        status_notify.clear()
+    # Wait for completion using race-free helper method
+    await storage.wait_for_completion(task_id)
 
     print("Pipeline complete!")
     await worker_handle.shutdown()

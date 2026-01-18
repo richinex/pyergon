@@ -1,8 +1,6 @@
 """
 Complete order processing system with versioning (clean output)
 
-**Rust Reference**: ergon_rust/ergon/examples/comprehensive_demo_3.rs
-
 Clean production-ready example with:
 - NO logging during execution (silent flows)
 - Multiple deployment versions (v1.0 vs v2.0) running concurrently
@@ -24,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 
 from pyergon import Scheduler, Worker, flow, flow_type, step
-from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.core import RetryPolicy
 from pyergon.executor.timer import schedule_timer_named
 from pyergon.storage.sqlite import SqliteExecutionLog
 
@@ -50,7 +48,6 @@ class PaymentFlow:
         """
         Process payment with simulated retryable failures.
 
-        **Rust Reference**: process() lines 28-35
         """
         # Deterministic failure simulation
         hash_value = int(hashlib.md5(self.order_id.encode()).hexdigest(), 16)
@@ -64,7 +61,6 @@ class PaymentFlow:
         """
         Charge customer's card.
 
-        **Rust Reference**: charge_card() lines 37-44
         """
         await asyncio.sleep(0.1)
         if should_fail:
@@ -84,7 +80,6 @@ class ShippingFlow:
         """
         Arrange shipping with warehouse preparation delay.
 
-        **Rust Reference**: process() lines 56-59
         """
         await self.prepare_package()
         return f"TRACK-{uuid.uuid4().hex[:8]}"
@@ -94,7 +89,6 @@ class ShippingFlow:
         """
         Wait for warehouse package preparation.
 
-        **Rust Reference**: prepare_package() lines 61-65
         """
         await schedule_timer_named(2.0, "warehouse-prep")
 
@@ -118,7 +112,6 @@ class OrderReceipt:
     """
     Final order receipt with versioning information.
 
-    **Rust Reference**: OrderReceipt lines 170-178
     """
 
     order_id: str
@@ -135,7 +128,6 @@ class OrderFlow:
     """
     Main order processing flow with versioning.
 
-    **Rust Reference**: OrderFlow in comprehensive_demo_3.rs lines 68-161
     """
 
     order_id: str
@@ -150,7 +142,6 @@ class OrderFlow:
         """
         Process order (no logging).
 
-        **Rust Reference**: process() lines 80-107
         """
         # Run parallel validations (DAG)
         await self.run_validations()
@@ -176,7 +167,6 @@ class OrderFlow:
         """
         Run parallel validations using DAG execution.
 
-        **Rust Reference**: run_validations() lines 109-116
         """
         from pyergon.executor.dag_runtime import dag
 
@@ -187,7 +177,6 @@ class OrderFlow:
         """
         Validate customer eligibility.
 
-        **Rust Reference**: validate_customer() lines 118-125
         """
         await asyncio.sleep(0.1)
         if self.customer_id.startswith("BLOCKED_"):
@@ -199,7 +188,6 @@ class OrderFlow:
         """
         Check inventory availability.
 
-        **Rust Reference**: check_inventory() lines 127-131
         """
         await asyncio.sleep(0.1)
         return True
@@ -209,7 +197,6 @@ class OrderFlow:
         """
         Run fraud check with timer delay.
 
-        **Rust Reference**: check_fraud() lines 133-139
         """
         await schedule_timer_named(1.0, "fraud-check")
         return True
@@ -228,7 +215,6 @@ class OrderFlow:
         """
         Aggregate parallel validation results.
 
-        **Rust Reference**: aggregate_validations() lines 141-160
         """
         if not customer or not inventory or not fraud:
             raise Exception("ValidationFailed")
@@ -247,7 +233,6 @@ async def main():
     """
     Run comprehensive demo with versioning.
 
-    **Rust Reference**: main() lines 181-269
     """
     # Initialize storage
     storage = SqliteExecutionLog("data/comprehensive_demo_3.db")
@@ -265,7 +250,6 @@ async def main():
         )
 
         # Register all flow types
-        # **Rust Reference**: Lines 192-194
         await worker.register(OrderFlow)
         await worker.register(PaymentFlow)
         await worker.register(ShippingFlow)
@@ -274,7 +258,6 @@ async def main():
         worker_handles.append(handle)
 
     # Schedule orders with different versions
-    # **Rust Reference**: Lines 199-218
     orders = [
         ("ORDER-001", "CUST-123", 99.99, "123 Main St", "v1.0"),
         ("ORDER-002", "CUST-456", 149.50, "456 Oak Ave", "v2.0"),
@@ -297,54 +280,23 @@ async def main():
         task_id = await scheduler.schedule(order, flow_id=str(flow_id))
         task_ids.append((task_id, version))
 
-    # Event-driven waiting using status_notify()
-    # **Rust Reference**: Lines 220-239
-    status_notify = storage.status_notify()
+    # Wait for all tasks to complete using race-free helper method
     timeout = 30.0
 
     try:
         await asyncio.wait_for(
-            _wait_for_completion(storage, task_ids, status_notify), timeout=timeout
+            storage.wait_for_all([task_id for task_id, _ in task_ids]), timeout=timeout
         )
     except TimeoutError:
         print("[Warning] Timeout waiting for flows to complete")
 
-    # Print final results
-    # **Rust Reference**: Lines 241-261
     await _print_results(storage, task_ids)
 
     # Shutdown workers
-    # **Rust Reference**: Lines 263-266
     for handle in worker_handles:
         await handle.shutdown()
 
     await storage.close()
-
-
-async def _wait_for_completion(
-    storage, task_ids: list[tuple[str, str]], status_notify: asyncio.Event
-):
-    """
-    Wait for all flows to complete using event-driven notifications.
-
-    **Rust Reference**: comprehensive_demo_3.rs lines 221-239
-    """
-    while True:
-        all_complete = True
-
-        for task_id, _ in task_ids:
-            task = await storage.get_scheduled_flow(task_id)
-            if task:
-                if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-                    all_complete = False
-                    break
-
-        if all_complete:
-            break
-
-        # Wait for status change notification
-        await status_notify.wait()
-        status_notify.clear()  # Reset for next notification
 
 
 async def _print_results(storage, task_ids: list[tuple[str, str]]):

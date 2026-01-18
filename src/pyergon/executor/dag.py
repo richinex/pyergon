@@ -2,36 +2,7 @@
 
 Enables automatic parallel execution of independent workflow steps by
 building a dependency graph at runtime and executing in topological order.
-
-Design: Information Hiding (Parnas)
-Implementation uses deferred handles and dependency tracking, but users
-only see the high-level DAG flow abstraction. The complexity of parallel
-execution coordination is hidden.
-
-How it works:
-1. Steps return StepHandle[T] instead of T directly
-2. Handles contain step metadata and factory functions
-3. When handles are used as inputs, dependencies are tracked
-4. DeferredRegistry builds the dependency graph
-5. Independent steps execute in parallel via asyncio.gather
-6. Dependent steps wait for their dependencies first
-
-Example:
-    ```python
-    @flow
-    class OrderProcessor:
-        async def process_order(self) -> OrderResult:
-            # These run in parallel (independent)
-            user = self.fetch_user()
-            inventory = self.check_inventory()
-            pricing = self.get_pricing()
-
-            # Waits for all three above
-            validated = self.validate_order(user, inventory, pricing)
-
-            # Waits for validation
-            return self.charge_card(validated)
-    ```
+Independent steps execute in parallel via asyncio.gather.
 """
 
 import asyncio
@@ -53,16 +24,9 @@ StepFactory = Callable[[StepInputs], Awaitable[StepOutput]]
 class StepHandle(Generic[T]):
     """Handle representing a deferred step execution.
 
-    The step is not executed immediately. Instead, it's registered with
-    the executor and resolved later based on the dependency graph.
-
-    Important: Handles are single-use. The resolve() method can only
-    be called once. Store the result if you need it multiple times.
-
-    Attributes:
-        step_id: Unique step identifier
-        dependencies: List of step IDs this step depends on
-        _future: asyncio.Future for the result
+    Steps are registered with the executor and resolved later based on the
+    dependency graph. Handles are single-use - resolve() can only be called
+    once. Store the result if needed multiple times.
     """
 
     def __init__(self, step_id: str, dependencies: list[str], future: "asyncio.Future[T]"):
@@ -74,21 +38,8 @@ class StepHandle(Generic[T]):
     async def resolve(self) -> T:
         """Await the step result.
 
-        Blocks until the step is resolved. Can only be called once.
-        If you need the result in multiple places, store it:
-
-        Example:
-            ```python
-            result = await handle.resolve()
-            # Use result multiple times
-            ```
-
-        Returns:
-            The step result of type T
-
-        Raises:
-            RuntimeError: If called twice
-            Exception: If step execution failed
+        Blocks until the step completes. Can only be called once - store
+        the result if needed in multiple places.
         """
         if self._resolved:
             raise RuntimeError(
@@ -102,14 +53,7 @@ class StepHandle(Generic[T]):
 
 @dataclass
 class DeferredStep:
-    """Internal representation of a deferred step for execution.
-
-    Attributes:
-        step_id: Step identifier
-        dependencies: List of dependency step IDs
-        factory: Factory function taking serialized inputs, returning serialized output
-        result_future: asyncio.Future to set the result
-    """
+    """Internal representation of a deferred step for execution."""
 
     step_id: str
     dependencies: list[str]
@@ -118,32 +62,7 @@ class DeferredStep:
 
 
 class DeferredRegistry:
-    """Registry for collecting deferred steps during flow execution.
-
-    Example:
-        ```python
-        registry = DeferredRegistry()
-
-        # Register independent steps (run in parallel)
-        user = registry.register("fetch_user", [], fetch_user_impl)
-        inventory = registry.register("fetch_inventory", [], fetch_inventory_impl)
-        pricing = registry.register("fetch_pricing", [], fetch_pricing_impl)
-
-        # Register dependent step (waits for all three)
-        validated = registry.register(
-            "validate_order",
-            ["fetch_user", "fetch_inventory", "fetch_pricing"],
-            validate_impl
-        )
-
-        # Execute all steps with automatic parallelization
-        await registry.execute()
-
-        # Resolve results
-        user_data = await user.resolve()
-        validated_data = await validated.resolve()
-        ```
-    """
+    """Registry for collecting deferred steps during flow execution."""
 
     def __init__(self):
         self.steps: list[DeferredStep] = []
@@ -151,36 +70,7 @@ class DeferredRegistry:
     def register(
         self, step_name: str, dependencies: list[str], factory: Callable[[StepInputs], Awaitable[T]]
     ) -> StepHandle[T]:
-        """Register a deferred step with explicit dependencies.
-
-        Dependencies must be explicitly declared to make the DAG
-        structure clear from the code.
-
-        Args:
-            step_name: Unique step identifier
-            dependencies: List of step names this step depends on
-            factory: Async function taking StepInputs and returning T
-
-        Returns:
-            StepHandle[T] that can be awaited for the result
-
-        Example:
-            ```python
-            registry = DeferredRegistry()
-
-            # Independent parallel steps
-            a = registry.register("fetch_user", [], async_fetch_user)
-            b = registry.register("fetch_inventory", [], async_fetch_inventory)
-            c = registry.register("fetch_pricing", [], async_fetch_pricing)
-
-            # Root step
-            root = registry.register("root", [], lambda _: async_root())
-
-            # These depend on root - run in parallel after root
-            branch1 = registry.register("branch1", ["root"], async_branch1)
-            branch2 = registry.register("branch2", ["root"], async_branch2)
-            ```
-        """
+        """Register a deferred step with explicit dependencies."""
         step_id = step_name
         deps = list(dependencies)  # Copy to avoid mutation
 
@@ -210,23 +100,8 @@ class DeferredRegistry:
     def validate(self) -> None:
         """Validate the DAG structure without executing.
 
-        Checks for cycles and invalid dependencies. Call before
-        execute() to catch structural issues early.
-
-        Raises:
-            ValueError: If cycles or invalid dependencies found
-
-        Example:
-            ```python
-            registry = DeferredRegistry()
-            # ... register steps ...
-
-            # Validate before execution
-            registry.validate()
-
-            # If validation passes, safe to execute
-            await registry.execute()
-            ```
+        Checks for cycles and invalid dependencies. Call before execute()
+        to catch structural issues early.
         """
         # Build step ID set
         step_ids: set[str] = {s.step_id for s in self.steps}
@@ -266,24 +141,11 @@ class DeferredRegistry:
                     )
 
     async def execute(self) -> None:
-        """Execute all registered steps with automatic parallelization.
-
-        Automatically validates the DAG before execution. Call validate()
-        beforehand if you want to check for issues separately.
-
-        Raises:
-            ValueError: If DAG is invalid (cycles or invalid dependencies)
-            Exception: If any step execution fails
-        """
+        """Execute all registered steps with automatic parallelization."""
         await execute_dag(self.steps)
 
     def summary(self) -> "DagSummary":
-        """Return a summary of the DAG structure.
-
-        Returns:
-            DagSummary with graph statistics including total steps,
-            root nodes, leaf nodes, and maximum depth
-        """
+        """Return a summary of the DAG structure."""
         total_steps = len(self.steps)
 
         # Find roots (steps with no dependencies)
@@ -311,22 +173,7 @@ class DeferredRegistry:
     def level_graph(self) -> str:
         """Return a level-based graph showing parallel execution levels.
 
-        Shows steps grouped by execution level, making it clear
-        which steps run in parallel.
-
-        Returns:
-            Multi-line string representation
-
-        Example output:
-            ```
-            Level 0: [get_customer]
-                     ↓
-            Level 1: [validate_payment] [check_inventory] (2 parallel steps)
-                     ↓
-            Level 2: [process_order]
-                     ↓
-            Level 3: [send_confirmation]
-            ```
+        Steps at the same level run in parallel.
         """
         output = f"DAG Execution Levels ({len(self.steps)} steps):\n\n"
 
@@ -357,12 +204,7 @@ class DeferredRegistry:
         return output
 
     def _calculate_depths(self) -> dict[str, int]:
-        """Calculate the depth of each step in the DAG.
-
-        Returns:
-            Dict mapping step_id to depth. Root nodes have depth 0,
-            their children have depth 1, etc.
-        """
+        """Calculate the depth of each step in the DAG."""
         depths: dict[str, int] = {}
 
         # Find roots
@@ -399,16 +241,7 @@ class DeferredRegistry:
 
 @dataclass
 class DagSummary:
-    """Summary information about a DAG structure.
-
-    Attributes:
-        total_steps: Total number of steps in the DAG
-        root_count: Number of root nodes (steps with no dependencies)
-        leaf_count: Number of leaf nodes (steps with no dependents)
-        max_depth: Maximum depth of the DAG
-        roots: List of root step IDs
-        leaves: List of leaf step IDs
-    """
+    """Summary information about a DAG structure."""
 
     total_steps: int
     root_count: int
@@ -421,23 +254,8 @@ class DagSummary:
 async def execute_dag(steps: list[DeferredStep]) -> None:
     """Execute deferred steps in parallel based on dependencies.
 
-    Core DAG execution engine that builds and validates the dependency
-    graph, executes steps in topological order, runs independent steps
-    in parallel, and preserves task-local context.
-
-    Args:
-        steps: List of DeferredStep objects to execute
-
-    Raises:
-        ValueError: If DAG has cycles or invalid dependencies
-        Exception: If any step execution fails
-
-    Example:
-        ```python
-        registry = DeferredRegistry()
-        # ... register steps ...
-        await registry.execute()  # Internally calls execute_dag
-        ```
+    Core DAG execution engine that validates the dependency graph, executes
+    steps in topological order, and runs independent steps in parallel.
     """
     total = len(steps)
     completed: set[str] = set()

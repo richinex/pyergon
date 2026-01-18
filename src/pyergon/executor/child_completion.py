@@ -1,12 +1,7 @@
 """Child flow completion signaling.
 
 Provides automatic parent notification when child flows complete.
-When a child flow finishes, this module signals the parent flow
-to resume execution and receive the result.
-
-Design: Error Handling
-Signaling failures are logged but don't raise exceptions, allowing
-the system to continue processing other flows gracefully.
+Signaling failures are logged but don't raise exceptions.
 """
 
 import logging
@@ -30,31 +25,8 @@ async def complete_child_flow(
 ) -> None:
     """Signal parent flow when child flow completes.
 
-    Called by the worker when a child flow scheduled via invoke()
-    finishes execution. Handles reading the child's result, packaging
-    it as a signal payload, and resuming the parent flow.
-
-    Internal method for automatic parent-child coordination. Users
-    interact with this indirectly via invoke().result().
-
-    Args:
-        storage: Storage backend for persistence
-        flow_id: Child flow identifier
-        parent_metadata: Parent flow ID and signal token for resumption
-        success: Whether child completed successfully
-        error_msg: Error message if child failed
-
-    Example:
-        ```python
-        await complete_child_flow(
-            storage, child_flow_id,
-            parent_metadata=(parent_id, signal_token),
-            success=True
-        )
-        ```
-
-    Note:
-        Errors are logged but not raised, allowing graceful degradation.
+    Called by the worker when a child flow finishes execution. Reads the
+    child's result, packages it as a signal payload, and resumes the parent.
     """
     # Early return if no parent
     if parent_metadata is None:

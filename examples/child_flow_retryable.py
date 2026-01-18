@@ -1,7 +1,6 @@
 """
 Child Flow Retryable Error Test
 
-**Rust Reference**: ergon_rust/ergon/src/executor/child_flow.rs lines 42-62
 Demonstrates ChildFlowError preserving retryability from child flows.
 
 ## How It Works
@@ -166,10 +165,9 @@ async def main():
     await worker.register(OrderParentFlow)
     worker_handle = await worker.start()
 
-    # Wait for completion
-    status_notify = storage.status_notify()
+    # Wait for completion using race-free helper method
     try:
-        await asyncio.wait_for(_wait_for_completion(storage, task_id, status_notify), timeout=10.0)
+        await asyncio.wait_for(storage.wait_for_completion(task_id), timeout=10.0)
     except TimeoutError:
         print("\nWARNING: Timeout waiting for completion")
 
@@ -201,16 +199,6 @@ async def main():
 
     await worker_handle.shutdown()
     await storage.close()
-
-
-async def _wait_for_completion(storage, task_id: str, status_notify: asyncio.Event):
-    """Wait for flow to complete using event-driven notifications."""
-    while True:
-        task = await storage.get_scheduled_flow(task_id)
-        if task and task.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-            break
-        await status_notify.wait()
-        status_notify.clear()
 
 
 if __name__ == "__main__":

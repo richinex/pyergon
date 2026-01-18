@@ -64,7 +64,9 @@ class SqliteExecutionLog(ExecutionLog):
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
-        self._status_notify = asyncio.Event()
+
+        # Status notification uses Condition for race-free wait_for(predicate) pattern
+        self._status_notify = asyncio.Condition(self._lock)
 
     @classmethod
     async def in_memory(cls) -> SqliteExecutionLog:
@@ -159,7 +161,6 @@ class SqliteExecutionLog(ExecutionLog):
                 timestamp INTEGER NOT NULL,
                 class_name TEXT NOT NULL,
                 method_name TEXT NOT NULL,
-                delay INTEGER,
                 status TEXT CHECK( status IN (
                     'PENDING','WAITING_FOR_SIGNAL','WAITING_FOR_TIMER','COMPLETE'
                 ) ) NOT NULL,
@@ -242,7 +243,6 @@ class SqliteExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """Record the start of a step execution.
@@ -272,9 +272,9 @@ class SqliteExecutionLog(ExecutionLog):
         await self._connection.execute(
             """
             INSERT INTO execution_log (
-                id, step, timestamp, class_name, method_name, delay, status, attempts,
+                id, step, timestamp, class_name, method_name, status, attempts,
                 parameters, params_hash, retry_policy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, step)
             DO UPDATE SET
                 attempts = attempts + 1,
@@ -288,7 +288,6 @@ class SqliteExecutionLog(ExecutionLog):
                 timestamp_ms,
                 class_name,
                 method_name,
-                delay,
                 InvocationStatus.PENDING.value,
                 1,
                 parameters,
@@ -314,7 +313,6 @@ class SqliteExecutionLog(ExecutionLog):
             is_retryable=None,
             timestamp=timestamp_dt,
             updated_at=timestamp_dt,
-            delay=delay,
             retry_policy=retry_policy,
             timer_fire_at=None,
             timer_name=None,
@@ -363,7 +361,7 @@ class SqliteExecutionLog(ExecutionLog):
         cursor = await self._connection.execute(
             """
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
-                   parameters, params_hash, return_value, delay, retry_policy,
+                   parameters, params_hash, return_value, retry_policy,
                    is_retryable, timer_fire_at, timer_name
             FROM execution_log
             WHERE id = ? AND step = ?
@@ -387,7 +385,7 @@ class SqliteExecutionLog(ExecutionLog):
 
         cursor = await self._connection.execute("""
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
-                   parameters, params_hash, return_value, delay, retry_policy,
+                   parameters, params_hash, return_value, retry_policy,
                    is_retryable, timer_fire_at, timer_name
             FROM execution_log
             WHERE step = 0 AND status != 'COMPLETE'
@@ -624,8 +622,9 @@ class SqliteExecutionLog(ExecutionLog):
 
         await self._connection.commit()
 
-        self._status_notify.set()
-        self._status_notify.clear()
+        # Notify status listeners (must be called while holding the lock)
+        async with self._lock:
+            self._status_notify.notify_all()
 
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
         """Reschedule a failed flow for retry after a delay.
@@ -869,7 +868,7 @@ class SqliteExecutionLog(ExecutionLog):
         cursor = await self._connection.execute(
             """
             SELECT id, step, timestamp, class_name, method_name, status, attempts,
-                   parameters, params_hash, return_value, delay, retry_policy,
+                   parameters, params_hash, return_value, retry_policy,
                    is_retryable, timer_fire_at, timer_name
             FROM execution_log
             WHERE id = ?
@@ -1088,6 +1087,61 @@ class SqliteExecutionLog(ExecutionLog):
             await self._connection.close()
             self._connection = None
 
+    async def wait_for_completion(self, task_id: str) -> TaskStatus:
+        """Wait for a single task to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        self._check_connected()
+
+        async with self._status_notify:
+            while True:
+                # Check current status (inside lock)
+                flow = await self.get_scheduled_flow(task_id)
+                if flow is None:
+                    raise StorageError(f"Task not found: task_id={task_id}")
+
+                if flow.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                    return flow.status
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
+    async def wait_for_all(self, task_ids: list[str]) -> list[tuple[str, TaskStatus]]:
+        """Wait for all tasks to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        self._check_connected()
+
+        async with self._status_notify:
+            while True:
+                # Check which tasks have completed (inside lock)
+                all_done = True
+                for task_id in task_ids:
+                    flow = await self.get_scheduled_flow(task_id)
+                    if flow is None:
+                        raise StorageError(f"Task not found: task_id={task_id}")
+
+                    if flow.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                        all_done = False
+                        break
+
+                if all_done:
+                    # Collect final results
+                    results = []
+                    for task_id in task_ids:
+                        flow = await self.get_scheduled_flow(task_id)
+                        if flow is None:
+                            raise StorageError(f"Task not found: task_id={task_id}")
+                        results.append((task_id, flow.status))
+                    return results
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
     def work_notify(self) -> asyncio.Event:
         """Return event for work notifications (WorkNotificationSource protocol).
 
@@ -1110,14 +1164,22 @@ class SqliteExecutionLog(ExecutionLog):
         """
         return self._timer_notify
 
-    def status_notify(self) -> asyncio.Event:
-        """Return event for flow status change notifications.
+    def status_notify(self) -> asyncio.Condition:
+        """Return condition for flow status change notifications.
 
-        Callers can use this to wait for flow status changes (completion, failure, etc.)
-        instead of polling. The notification is triggered whenever any flow status changes.
+        Callers can use this to wait for flow status changes. The condition
+        uses the internal lock, so callers must acquire it before waiting:
+
+        ```python
+        async with storage.status_notify():
+            await storage.status_notify().wait()
+        ```
+
+        Recommended: Use wait_for_completion() or wait_for_all() instead,
+        which handle the condition properly and avoid race conditions.
 
         Returns:
-            asyncio.Event that is set when any flow status changes
+            asyncio.Condition that is notified when any flow status changes
         """
         return self._status_notify
 
@@ -1134,8 +1196,8 @@ class SqliteExecutionLog(ExecutionLog):
 
         Row format (matches SELECT query):
         0:id, 1:step, 2:timestamp, 3:class_name, 4:method_name, 5:status,
-        6:attempts, 7:parameters, 8:params_hash, 9:return_value, 10:delay,
-        11:retry_policy, 12:is_retryable, 13:timer_fire_at, 14:timer_name
+        6:attempts, 7:parameters, 8:params_hash, 9:return_value, 10:retry_policy,
+        11:is_retryable, 12:timer_fire_at, 13:timer_name
         """
         # Parse timestamp from milliseconds
         timestamp_ms = row[2]
@@ -1148,7 +1210,7 @@ class SqliteExecutionLog(ExecutionLog):
         status = InvocationStatus(status_str)
 
         # Parse retry_policy from JSON
-        retry_policy_json = row[11]
+        retry_policy_json = row[10]
         retry_policy = None
         if retry_policy_json:
             import json
@@ -1165,11 +1227,11 @@ class SqliteExecutionLog(ExecutionLog):
                 pass
 
         # Parse is_retryable (0/1/NULL -> False/True/None)
-        is_retryable_int = row[12]
+        is_retryable_int = row[11]
         is_retryable = None if is_retryable_int is None else bool(is_retryable_int)
 
         # Parse timer_fire_at from milliseconds
-        timer_fire_at_ms = row[13]
+        timer_fire_at_ms = row[12]
         timer_fire_at = (
             datetime.fromtimestamp(timer_fire_at_ms / 1000.0) if timer_fire_at_ms else None
         )
@@ -1186,10 +1248,9 @@ class SqliteExecutionLog(ExecutionLog):
             parameters=row[7],
             params_hash=row[8],
             return_value=row[9],
-            delay=row[10],
             retry_policy=retry_policy,
             is_retryable=is_retryable,
             updated_at=timestamp,  # Use timestamp (no separate updated_at in DB)
             timer_fire_at=timer_fire_at,
-            timer_name=row[14],
+            timer_name=row[13],
         )

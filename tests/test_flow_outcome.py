@@ -6,8 +6,6 @@ This test verifies Phase 2 of the implementation (Event-Driven Architecture):
 - Instant suspension detection in Executor (Phase 2.2)
 - ExecutionContext suspend reason management (Phase 2.3)
 
-**Rust Reference**: ergon_rust/ergon/src/executor/error.rs lines 69-92
-**Rust Reference**: ergon_rust/ergon/src/executor/instance.rs lines 91-136
 """
 
 from dataclasses import dataclass
@@ -103,7 +101,6 @@ async def test_completed_success():
     """
     Test FlowOutcome for successful completion.
 
-    **Rust Reference**: FlowOutcome::Completed(R) where R is success value
     """
     # Setup
     storage = InMemoryExecutionLog()
@@ -130,7 +127,6 @@ async def test_completed_error():
     """
     Test FlowOutcome for error completion.
 
-    **Rust Reference**: FlowOutcome::Completed(Err(e))
 
     In Python, errors are returned as Completed(exception) instead of raising.
     """
@@ -161,7 +157,6 @@ async def test_suspended_timer():
     """
     Test FlowOutcome for timer suspension.
 
-    **Rust Reference**: FlowOutcome::Suspended(SuspendReason::Timer { flow_id, step })
 
     When a flow calls schedule_timer(), it should:
     1. Set suspend_reason in ExecutionContext
@@ -201,7 +196,6 @@ async def test_suspended_signal():
     """
     Test FlowOutcome for signal suspension.
 
-    **Rust Reference**: FlowOutcome::Suspended(SuspendReason::Signal { flow_id, step, signal_name })
 
     When a flow calls await_external_signal(), it should:
     1. Set suspend_reason in ExecutionContext with signal_name

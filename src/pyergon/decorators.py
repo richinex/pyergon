@@ -45,7 +45,6 @@ def step(
     depends_on: str | list[str] | None = _UNSET,  # type: ignore
     inputs: dict[str, str] | None = None,
     cache_errors: bool = False,
-    delay: int | None = None,
     retry_policy: RetryPolicy | None = None,
 ) -> F:
     """Mark a method as a durable workflow step with full instrumentation.
@@ -62,7 +61,6 @@ def step(
         depends_on: Dependencies for DAG execution
         inputs: Parameter wiring from other steps
         cache_errors: Cache error results (don't retry)
-        delay: Delay in milliseconds before execution
         retry_policy: Retry policy for this step
 
     Example:
@@ -76,11 +74,6 @@ def step(
         async def critical_step(self) -> str:
             # Custom retry policy
             return await important_operation()
-
-        @step(delay=1000)
-        async def delayed_step(self) -> None:
-            # Waits 1 second before executing
-            pass
         ```
     """
 
@@ -89,7 +82,6 @@ def step(
         f._is_ergon_step = True  # type: ignore
         f._step_name = f.__name__  # type: ignore
         f._step_cache_errors = cache_errors  # type: ignore
-        f._step_delay = delay  # type: ignore
         f._step_retry_policy = retry_policy  # type: ignore
 
         # Build dependencies
@@ -204,7 +196,6 @@ def step(
                 method_name=method_name,
                 parameters=parameters,
                 params_hash=params_hash,
-                delay=delay,
                 retry_policy=retry_policy,
             )
 
@@ -549,7 +540,6 @@ def flow(func: F | None = None, *, retry_policy: RetryPolicy | None = None) -> F
                 method_name=method_name,
                 parameters=parameters,
                 params_hash=params_hash,
-                delay=None,
                 retry_policy=retry_policy,
             )
 

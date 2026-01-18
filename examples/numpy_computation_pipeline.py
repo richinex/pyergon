@@ -39,7 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pyergon import Scheduler, Worker, flow, flow_type, step
-from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.core import RetryPolicy
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -274,9 +274,9 @@ async def main():
         ScientificPipeline(experiment_id="EXP-2024-001", num_batches=3, matrix_size=50)
     )
 
-    status_notify = storage.status_notify()
+    # Wait for completion using race-free helper method
     try:
-        await asyncio.wait_for(_wait_for_completion(storage, task_id, status_notify), timeout=30.0)
+        await asyncio.wait_for(storage.wait_for_completion(task_id), timeout=30.0)
     except TimeoutError:
         print("[Warning] Timeout waiting for completion")
 
@@ -306,16 +306,6 @@ async def main():
 
     await worker_handle.shutdown()
     await storage.close()
-
-
-async def _wait_for_completion(storage, task_id: str, status_notify: asyncio.Event):
-    """Wait for flow to complete using event-driven notifications."""
-    while True:
-        task = await storage.get_scheduled_flow(task_id)
-        if task and task.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-            break
-        await status_notify.wait()
-        status_notify.clear()
 
 
 if __name__ == "__main__":

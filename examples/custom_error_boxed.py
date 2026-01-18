@@ -1,7 +1,6 @@
 """
 Custom error types with retry control.
 
-**Rust Reference**: ergon_rust/ergon/examples/custom_error_boxed.rs
 
 Run with:
     PYTHONPATH=src python3 examples/custom_error_boxed.py
@@ -19,7 +18,7 @@ import threading
 from dataclasses import dataclass
 
 from pyergon import Scheduler, Worker, flow, flow_type
-from pyergon.core import RetryPolicy, TaskStatus
+from pyergon.core import RetryPolicy
 from pyergon.storage.sqlite import SqliteExecutionLog
 
 logging.basicConfig(level=logging.CRITICAL)
@@ -162,7 +161,6 @@ class PaymentFlow:
     """
     Payment processing flow with custom error handling.
 
-    **Rust Reference**: PaymentFlow struct in custom_error_boxed.rs lines 69-106
     """
 
     order_id: str
@@ -174,7 +172,6 @@ class PaymentFlow:
         """
         Process payment with deterministic failure injection.
 
-        **Rust Reference**: process() in custom_error_boxed.rs lines 77-105
         """
         attempt = PAYMENT_ATTEMPTS.increment(self.order_id)
 
@@ -199,7 +196,6 @@ class ShippingFlow:
     """
     Shipping flow with custom error handling.
 
-    **Rust Reference**: ShippingFlow struct in custom_error_boxed.rs lines 108-141
     """
 
     order_id: str
@@ -211,7 +207,6 @@ class ShippingFlow:
         """
         Process shipping with deterministic failure injection.
 
-        **Rust Reference**: process() in custom_error_boxed.rs lines 116-140
         """
         attempt = SHIPPING_ATTEMPTS.increment(self.order_id)
 
@@ -237,7 +232,6 @@ async def main():
     """
     Main test execution.
 
-    **Rust Reference**: main() in custom_error_boxed.rs lines 144-236
     """
     storage = SqliteExecutionLog("data/custom_error_boxed.db")
     await storage.connect()
@@ -277,10 +271,11 @@ async def main():
     )
     task_ids.append(("Out of stock (permanent)", task_id))
 
-    # Wait for all tasks to complete
-    status_notify = storage.status_notify()
+    # Wait for all tasks to complete using race-free helper method
     try:
-        await asyncio.wait_for(_wait_for_completion(storage, task_ids, status_notify), timeout=15.0)
+        await asyncio.wait_for(
+            storage.wait_for_all([task_id for _, task_id in task_ids]), timeout=15.0
+        )
     except TimeoutError:
         print("WARNING: Timeout waiting for completions")
 
@@ -302,23 +297,6 @@ async def main():
 
     await worker_handle.shutdown()
     await storage.close()
-
-
-async def _wait_for_completion(storage, task_ids, status_notify):
-    """Wait for all tasks to reach terminal state."""
-    while True:
-        all_complete = True
-        for _, task_id in task_ids:
-            task = await storage.get_scheduled_flow(task_id)
-            if task and task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
-                all_complete = False
-                break
-
-        if all_complete:
-            break
-
-        await status_notify.wait()
-        status_notify.clear()
 
 
 if __name__ == "__main__":

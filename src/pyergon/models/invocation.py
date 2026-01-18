@@ -29,7 +29,7 @@ class Invocation:
     - Result: serialized return value (or exception if cached)
     - Status: pending, waiting (timer/signal), or complete
     - Retry: attempts, retry_policy, is_retryable flag
-    - Timing: delays, timer fire times, timestamps
+    - Timing: timer fire times, timestamps
 
     The params_hash enables detection of non-deterministic behavior by
     comparing parameters across replay executions.
@@ -83,12 +83,6 @@ class Invocation:
     """When this invocation was last updated."""
 
     # Retry configuration
-    delay: int | None = None
-    """Optional delay before execution in milliseconds.
-
-    Used for: @step(delay=1000)
-    """
-
     retry_policy: RetryPolicy | None = None
     """Retry policy for this step (None means no automatic retries)."""
 
@@ -129,10 +123,6 @@ class Invocation:
     def get_params_hash(self) -> int:
         """Return the parameters hash for non-determinism detection."""
         return self.params_hash
-
-    def get_delay(self) -> int | None:
-        """Return the delay in milliseconds, or None if no delay."""
-        return self.delay
 
     def get_retry_policy(self) -> RetryPolicy | None:
         """Return the retry policy, or None if no retries configured."""

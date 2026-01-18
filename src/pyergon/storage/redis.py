@@ -84,7 +84,10 @@ class RedisExecutionLog(ExecutionLog):
 
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
-        self._status_notify = asyncio.Event()
+
+        # Status notification uses Condition for race-free wait_for(predicate) pattern
+        self._status_lock = asyncio.Lock()
+        self._status_notify = asyncio.Condition(self._status_lock)
 
     async def connect(self) -> None:
         """Establish Redis connection pool."""
@@ -131,7 +134,6 @@ class RedisExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """Log the start of a step invocation.
@@ -175,9 +177,6 @@ class RedisExecutionLog(ExecutionLog):
             await pipe.hset(inv_key, "updated_at", now_ts)
             await pipe.hset(inv_key, "is_retryable", "1")  # Default: retryable
 
-            if delay is not None:
-                await pipe.hset(inv_key, "delay", str(delay))
-
             if retry_policy is not None:
                 import pickle
 
@@ -201,7 +200,6 @@ class RedisExecutionLog(ExecutionLog):
             parameters=parameters,
             params_hash=params_hash,
             return_value=None,
-            delay=delay,
             retry_policy=retry_policy,
             is_retryable=None,
             timer_fire_at=None,
@@ -464,6 +462,10 @@ class RedisExecutionLog(ExecutionLog):
 
             await pipe.zrem("ergon:running", task_id)
             await pipe.execute()
+
+        # Notify status listeners (must be called while holding the lock)
+        async with self._status_lock:
+            self._status_notify.notify_all()
 
     async def get_scheduled_flow(self, task_id: str) -> ScheduledFlow | None:
         """Retrieve a scheduled flow by task ID.
@@ -789,6 +791,61 @@ class RedisExecutionLog(ExecutionLog):
         if keys:
             await self._redis.delete(*keys)
 
+    async def wait_for_completion(self, task_id: str) -> TaskStatus:
+        """Wait for a single task to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        self._check_connected()
+
+        async with self._status_notify:
+            while True:
+                # Check current status (inside lock)
+                flow = await self.get_scheduled_flow(task_id)
+                if flow is None:
+                    raise StorageError(f"Task not found: task_id={task_id}")
+
+                if flow.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                    return flow.status
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
+    async def wait_for_all(self, task_ids: list[str]) -> list[tuple[str, TaskStatus]]:
+        """Wait for all tasks to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        self._check_connected()
+
+        async with self._status_notify:
+            while True:
+                # Check which tasks have completed (inside lock)
+                all_done = True
+                for task_id in task_ids:
+                    flow = await self.get_scheduled_flow(task_id)
+                    if flow is None:
+                        raise StorageError(f"Task not found: task_id={task_id}")
+
+                    if flow.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                        all_done = False
+                        break
+
+                if all_done:
+                    # Collect final results
+                    results = []
+                    for task_id in task_ids:
+                        flow = await self.get_scheduled_flow(task_id)
+                        if flow is None:
+                            raise StorageError(f"Task not found: task_id={task_id}")
+                        results.append((task_id, flow.status))
+                    return results
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
     async def _get_invocation_by_key(self, key: str) -> Invocation:
         """Fetch and parse invocation from Redis HASH."""
         data = await self._redis.hgetall(key)
@@ -822,10 +879,6 @@ class RedisExecutionLog(ExecutionLog):
 
             return_value = data.get(b"return_value")
 
-            delay = None
-            if b"delay" in data:
-                delay = int(data[b"delay"].decode())
-
             retry_policy = None
             if b"retry_policy" in data:
                 retry_policy = pickle.loads(data[b"retry_policy"])
@@ -854,7 +907,6 @@ class RedisExecutionLog(ExecutionLog):
                 parameters=parameters,
                 params_hash=params_hash,
                 return_value=return_value,
-                delay=delay,
                 retry_policy=retry_policy,
                 is_retryable=is_retryable,
                 timer_fire_at=timer_fire_at,
@@ -954,13 +1006,21 @@ class RedisExecutionLog(ExecutionLog):
         """
         return self._timer_notify
 
-    def status_notify(self) -> asyncio.Event:
-        """Return event for flow status change notifications.
+    def status_notify(self) -> asyncio.Condition:
+        """Return condition for flow status change notifications.
 
-        Callers can use this to wait for flow status changes instead
-        of polling.
+        Callers can use this to wait for flow status changes. The condition
+        uses an internal lock, so callers must acquire it before waiting:
+
+        ```python
+        async with storage.status_notify():
+            await storage.status_notify().wait()
+        ```
+
+        Recommended: Use wait_for_completion() or wait_for_all() instead,
+        which handle the condition properly and avoid race conditions.
 
         Returns:
-            asyncio.Event that is set when any flow status changes
+            asyncio.Condition that is notified when any flow status changes
         """
         return self._status_notify

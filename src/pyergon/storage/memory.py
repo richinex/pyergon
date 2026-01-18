@@ -65,7 +65,9 @@ class InMemoryExecutionLog(ExecutionLog):
         # Notification events (implements WorkNotificationSource and TimerNotificationSource)
         self._work_notify = asyncio.Event()
         self._timer_notify = asyncio.Event()
-        self._status_notify = asyncio.Event()
+
+        # Status notification uses Condition for race-free wait_for(predicate) pattern
+        self._status_notify = asyncio.Condition(self._lock)
 
     def __repr__(self) -> str:
         """Return string representation of storage instance."""
@@ -79,7 +81,6 @@ class InMemoryExecutionLog(ExecutionLog):
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: int | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> Invocation:
         """Record the start of a step execution."""
@@ -122,7 +123,6 @@ class InMemoryExecutionLog(ExecutionLog):
                 parameters=parameters,
                 params_hash=params_hash,
                 return_value=None,
-                delay=delay,
                 retry_policy=retry_policy,
                 is_retryable=None,
                 timer_fire_at=None,
@@ -158,7 +158,6 @@ class InMemoryExecutionLog(ExecutionLog):
                 parameters=old.parameters,
                 params_hash=old.params_hash,
                 return_value=return_value,
-                delay=old.delay,
                 retry_policy=old.retry_policy,
                 is_retryable=is_retryable,
                 timer_fire_at=old.timer_fire_at,
@@ -211,7 +210,6 @@ class InMemoryExecutionLog(ExecutionLog):
                     parameters=old.parameters,
                     params_hash=old.params_hash,
                     return_value=old.return_value,
-                    delay=old.delay,
                     retry_policy=old.retry_policy,
                     is_retryable=is_retryable,
                     timer_fire_at=old.timer_fire_at,
@@ -335,9 +333,8 @@ class InMemoryExecutionLog(ExecutionLog):
 
             self._scheduled_flows[task_id] = updated
 
-            # Notify status listeners
-            self._status_notify.set()
-            self._status_notify.clear()
+            # Notify status listeners (must be called while holding the lock)
+            self._status_notify.notify_all()
 
     async def retry_flow(self, task_id: str, error_message: str, delay: timedelta) -> None:
         """Reschedule a failed flow for retry after a delay."""
@@ -398,7 +395,6 @@ class InMemoryExecutionLog(ExecutionLog):
                     parameters=old.parameters,
                     params_hash=old.params_hash,
                     return_value=old.return_value,
-                    delay=old.delay,
                     retry_policy=old.retry_policy,
                     is_retryable=old.is_retryable,
                     timer_fire_at=timer_fire_at,
@@ -454,7 +450,6 @@ class InMemoryExecutionLog(ExecutionLog):
                 parameters=inv.parameters,
                 params_hash=inv.params_hash,
                 return_value=inv.return_value,
-                delay=inv.delay,
                 retry_policy=inv.retry_policy,
                 is_retryable=inv.is_retryable,
                 timer_fire_at=inv.timer_fire_at,
@@ -510,7 +505,6 @@ class InMemoryExecutionLog(ExecutionLog):
                 parameters=inv.parameters,
                 params_hash=inv.params_hash,
                 return_value=inv.return_value,
-                delay=inv.delay,
                 retry_policy=inv.retry_policy,
                 is_retryable=inv.is_retryable,
                 timer_fire_at=inv.timer_fire_at,
@@ -647,11 +641,75 @@ class InMemoryExecutionLog(ExecutionLog):
     async def close(self) -> None:
         pass
 
+    async def wait_for_completion(self, task_id: str) -> TaskStatus:
+        """Wait for a single task to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        async with self._status_notify:
+            while True:
+                # Check current status (inside lock)
+                flow = self._scheduled_flows.get(task_id)
+                if flow is None:
+                    raise StorageError(f"Task not found: task_id={task_id}")
+
+                if flow.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                    return flow.status
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
+    async def wait_for_all(self, task_ids: list[str]) -> list[tuple[str, TaskStatus]]:
+        """Wait for all tasks to complete (race-free).
+
+        Uses asyncio.Condition with manual check-wait loop pattern.
+        The condition's lock ensures no race between status check and wait.
+        """
+        async with self._status_notify:
+            while True:
+                # Check which tasks have completed (inside lock)
+                all_done = True
+                for task_id in task_ids:
+                    flow = self._scheduled_flows.get(task_id)
+                    if flow is None:
+                        raise StorageError(f"Task not found: task_id={task_id}")
+
+                    if flow.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                        all_done = False
+                        break
+
+                if all_done:
+                    # Collect final results
+                    results = []
+                    for task_id in task_ids:
+                        flow = self._scheduled_flows.get(task_id)
+                        if flow is None:
+                            raise StorageError(f"Task not found: task_id={task_id}")
+                        results.append((task_id, flow.status))
+                    return results
+
+                # Wait for next status change (releases lock while waiting)
+                await self._status_notify.wait()
+
     def work_notify(self) -> asyncio.Event:
         return self._work_notify
 
     def timer_notify(self) -> asyncio.Event:
         return self._timer_notify
 
-    def status_notify(self) -> asyncio.Event:
+    def status_notify(self) -> asyncio.Condition:
+        """Return condition for flow status change notifications.
+
+        Callers can use this to wait for flow status changes. The condition
+        uses the internal lock, so callers must acquire it before waiting:
+
+        ```python
+        async with storage.status_notify():
+            await storage.status_notify().wait()
+        ```
+
+        Recommended: Use wait_for_completion() or wait_for_all() instead,
+        which handle the condition properly and avoid race conditions.
+        """
         return self._status_notify

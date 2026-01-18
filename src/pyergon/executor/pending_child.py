@@ -125,7 +125,6 @@ class PendingChild(Generic[R]):
             method_name=f"invoke({self.child_type})",
             parameters=self.child_bytes,
             params_hash=params_hash,
-            delay=None,
             retry_policy=None,
         )
 

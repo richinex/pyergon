@@ -200,7 +200,6 @@ class Context:
         method_name: str,
         parameters: bytes,
         params_hash: int,
-        delay: int | None = None,
         retry_policy: Any | None = None,
     ) -> None:
         """Log step execution start to storage.
@@ -213,7 +212,6 @@ class Context:
             method_name: Name of the step method
             parameters: Serialized parameters (pickle)
             params_hash: Hash of parameters for cache key
-            delay: Optional delay in milliseconds before execution
             retry_policy: Optional retry policy for this step
         """
         await self.storage.log_invocation_start(
@@ -223,7 +221,6 @@ class Context:
             method_name=method_name,
             parameters=parameters,
             params_hash=params_hash,
-            delay=delay,
             retry_policy=retry_policy,
         )
 

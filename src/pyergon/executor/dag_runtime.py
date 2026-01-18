@@ -2,54 +2,6 @@
 
 Provides runtime DAG execution using method introspection to discover
 steps decorated with @step and build the dependency graph automatically.
-
-Usage:
-    ```python
-    @flow
-    class MyFlow:
-        @step
-        async def step_a(self) -> int:
-            return 10
-
-        @step(depends_on=["step_a"], inputs={'a': 'step_a'})
-        async def step_b(self, a: int) -> int:
-            return a * 2
-
-        async def run(self) -> int:
-            return await dag(self)
-    ```
-
-The dag() function:
-1. Discovers all @step methods
-2. Builds dependency graph from depends_on metadata
-3. Executes in topological order
-4. Auto-wires inputs based on step return values
-5. Returns the result of the last step
-
-Concurrency vs Parallelism:
-DAG uses asyncio.gather() for concurrent execution. This provides
-concurrency (interleaved execution), not true parallelism. Steps
-must be non-blocking:
-
-- Good: await asyncio.sleep(), await http_client.get(), await db.query()
-- Bad: time.sleep(), CPU-intensive loops, blocking I/O
-
-For blocking operations, explicitly offload to threads:
-
-    ```python
-    @step
-    async def cpu_intensive(self) -> int:
-        result = await asyncio.to_thread(
-            self._blocking_computation,
-            arg1, arg2
-        )
-        return result
-
-    def _blocking_computation(self, arg1, arg2):
-        # Blocking work is safe here (runs in thread pool)
-        time.sleep(1.0)
-        return heavy_computation()
-    ```
 """
 
 import asyncio
@@ -68,38 +20,6 @@ async def dag(flow: Any, final_step: str | None = None) -> Any:
 
     Independent steps at the same dependency level are executed
     concurrently using asyncio.gather().
-
-    Args:
-        flow: Flow instance with @step decorated methods
-        final_step: Optional name of final step to execute and return.
-                   If None, executes all steps and returns the last one.
-
-    Returns:
-        The return value of the final step
-
-    Raises:
-        DagExecutionError: If dependency graph has cycles or missing dependencies
-
-    Example:
-        ```python
-        @flow
-        class OrderFlow:
-            @step
-            async def fetch_user(self) -> User:
-                ...
-
-            @step
-            async def fetch_inventory(self) -> Inventory:
-                ...
-
-            @step(depends_on=["fetch_user", "fetch_inventory"],
-                  inputs={'user': 'fetch_user', 'inv': 'fetch_inventory'})
-            async def process_order(self, user: User, inv: Inventory) -> Order:
-                ...
-
-            async def run(self) -> Order:
-                return await dag(self)
-        ```
     """
     # Step 1: Discover all @step methods
     steps = _discover_steps(flow)
@@ -167,14 +87,7 @@ async def dag(flow: Any, final_step: str | None = None) -> Any:
 
 
 def _discover_steps(flow: Any) -> list[str]:
-    """Discover all @step decorated methods in a flow.
-
-    Args:
-        flow: Flow instance
-
-    Returns:
-        List of step method names
-    """
+    """Discover all @step decorated methods in a flow."""
     steps = []
 
     for name in dir(flow):
@@ -192,18 +105,7 @@ def _discover_steps(flow: Any) -> list[str]:
 
 
 def _build_dependency_graph(flow: Any, steps: list[str]) -> dict[str, list[str]]:
-    """Build dependency graph from @step metadata.
-
-    Args:
-        flow: Flow instance
-        steps: List of step names
-
-    Returns:
-        Dict mapping step_name to list of steps it depends on
-
-    Example:
-        {'step_a': [], 'step_b': ['step_a'], 'step_c': ['step_a', 'step_b']}
-    """
+    """Build dependency graph from @step metadata."""
     graph: dict[str, list[str]] = {}
 
     for step_name in steps:
@@ -230,16 +132,7 @@ def _build_dependency_graph(flow: Any, steps: list[str]) -> dict[str, list[str]]
 def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
     """Topological sort of dependency graph using Kahn's algorithm.
 
-    Args:
-        graph: Dependency graph mapping step to dependencies
-
-    Returns:
-        List of steps in execution order
-
-    Raises:
-        DagExecutionError: If graph has cycles
-
-    Algorithm (Kahn's):
+    Kahn's algorithm:
     1. Find nodes with no incoming edges (no dependencies)
     2. Remove them and their outgoing edges
     3. Repeat until graph is empty
@@ -284,25 +177,11 @@ def _group_by_level(graph: dict[str, list[str]]) -> list[list[str]]:
 
     Steps at the same level have no dependencies on each other
     and can execute in parallel.
-
-    Args:
-        graph: Dependency graph mapping step to dependencies
-
-    Returns:
-        List of levels, each containing steps that can execute in parallel
-
-    Example:
-        graph = {'a': [], 'b': [], 'c': ['a'], 'd': ['a', 'b'], 'e': ['c', 'd']}
-        Returns: [['a', 'b'], ['c', 'd'], ['e']]
-        - Level 0: a, b (no dependencies)
-        - Level 1: c (depends on a), d (depends on a, b)
-        - Level 2: e (depends on c, d)
     """
     # Calculate the level (max dependency depth) for each step
     levels_map: dict[str, int] = {}
 
     def calculate_level(step: str) -> int:
-        """Calculate the level of a step - max depth from root."""
         if step in levels_map:
             return levels_map[step]
 
